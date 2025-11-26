@@ -1,30 +1,27 @@
 import database as db
 import discord
-import logging
 import os
+import logging
+import utils
 import io
-import re
-from typing import Literal, Optional
+from typing import Literal
 from datetime import datetime
 from discord import app_commands
 from discord.ext import commands
 from threading import Thread
 from flask import Flask, jsonify
 from dotenv import load_dotenv
+import asyncio
 
-import utils
-
-load_dotenv()
-
-# ========== FLASK SETUP ==========
 app = Flask(__name__)
 
 @app.route('/')
-def index():
-    return jsonify({"status": "Bot is running!"})
+def home():
+    return "✅ Bot Discord está online e rodando!", 200
 
 @app.route('/health')
 def health():
+    # tenta pegar objeto do bot (suporta tanto 'bot' quanto 'client')
     bot_obj = None
     for name in ('bot', 'client'):
         obj = globals().get(name)
@@ -43,14 +40,11 @@ def run_flask():
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
 
-# ========== LOGGING ==========
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+load_dotenv()
 
-# ========== BOT SETUP ==========
+# Adição: imports de typing (se ainda não existirem) e criação da instância do bot
+from typing import Optional, Literal
+
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
@@ -58,7 +52,12 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ========== MODALS & VIEWS ==========
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 class InscricaoModal(discord.ui.Modal, title="Inscrição no Sorteio"):
     primeiro_nome = discord.ui.TextInput(
         label="Primeiro Nome",
@@ -159,7 +158,7 @@ class InscricaoModal(discord.ui.Modal, title="Inscrição no Sorteio"):
             msg_content = f"{member.mention}\n{first_name} {last_name}\n{required_hashtag}"
             
             msg = await inscricao_channel.send(msg_content)
-            await msg.add_reaction("✅")
+            await msg.add_reaction("✅")  # Adiciona reação de verificado
             
             db.add_participant(
                 interaction.user.id,
@@ -184,7 +183,10 @@ class InscricaoModal(discord.ui.Modal, title="Inscrição no Sorteio"):
 class InscricaoView(discord.ui.View):
     def __init__(self, show_verify: bool = True):
         super().__init__(timeout=None)
+
+        # se show_verify for False, removemos o botão "Verificar minha inscrição"
         if not show_verify:
+            # removemos qualquer item com esse custom_id ou label
             for item in list(self.children):
                 label = getattr(item, "label", "")
                 cid = getattr(item, "custom_id", None)
@@ -197,6 +199,7 @@ class InscricaoView(discord.ui.View):
         custom_id="inscricao_button"
     )
     async def inscricao_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # verifica blacklist antes de tudo
         try:
             entry = None
             try:
@@ -207,14 +210,17 @@ class InscricaoView(discord.ui.View):
                 entry = bl.get(str(interaction.user.id)) or bl.get(interaction.user.id)
             if entry:
                 reason = entry.get("reason", "Não especificado")
+                # enviar mensagem simples (sem embed e sem mostrar quem baniu)
                 await interaction.response.send_message(
                     f"🚫 Você está na blacklist\n\nMotivo: {reason}",
                     ephemeral=True
                 )
                 return
         except Exception:
+            # se qualquer erro ao checar blacklist, continua com fluxo normal
             pass
 
+        # impede inscrições quando encerrado
         try:
             if db.get_inscricoes_closed():
                 await interaction.response.send_message(
@@ -223,6 +229,7 @@ class InscricaoView(discord.ui.View):
                 )
                 return
         except Exception:
+            # se DB não tiver a função, continua (compatibilidade)
             pass
 
         if db.is_registered(interaction.user.id):
@@ -240,6 +247,7 @@ class InscricaoView(discord.ui.View):
         custom_id="verificar_button"
     )
     async def verificar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # reutiliza a mesma lógica do comando /verificar para garantir igualdade
         participant = db.get_participant(interaction.user.id)
         if not participant:
             await interaction.response.send_message(
@@ -270,13 +278,63 @@ class InscricaoView(discord.ui.View):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# ========== BOT EVENTS ==========
+class InscricaoButton(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(
+        label="Inscrever-se no Sorteio",
+        style=discord.ButtonStyle.green,
+        custom_id="inscricao_button"
+    )
+    async def inscricao_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # verifica blacklist antes de tudo (view alternativa)
+        try:
+            entry = None
+            try:
+                bl = db.get_blacklist()
+            except Exception:
+                bl = None
+            if bl:
+                entry = bl.get(str(interaction.user.id)) or bl.get(interaction.user.id)
+            if entry:
+                reason = entry.get("reason", "Não especificado")
+                # mensagem simples (sem embed e sem exibir quem baniu)
+                await interaction.response.send_message(
+                    f"🚫 Você está na blacklist\n\nMotivo: {reason}",
+                    ephemeral=True
+                )
+                return
+        except Exception:
+            pass
+
+        # impede inscrições quando encerrado
+        try:
+            if db.get_inscricoes_closed():
+                await interaction.response.send_message(
+                    "❌ As inscrições estão encerradas no momento.",
+                    ephemeral=True
+                )
+                return
+        except Exception:
+            pass
+
+        if db.is_registered(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ Você já está inscrito no sorteio!",
+                ephemeral=True
+            )
+            return
+        modal = InscricaoModal()
+        await interaction.response.send_modal(modal)
+
 @bot.event
 async def on_ready():
     logger.info(f"Bot conectado como {bot.user}")
     
     try:
         button_msg_id = db.get_button_message_id()
+        # normaliza para lista (aceita int, str, list)
         button_ids = []
         if isinstance(button_msg_id, (list, tuple)):
             button_ids = list(button_msg_id)
@@ -287,11 +345,13 @@ async def on_ready():
                 try:
                     bot.add_view(InscricaoView(), message_id=int(mid))
                 except Exception:
+                    # continua mesmo se algum message_id inválido
                     continue
             logger.info(f"View do botão re-registrada para message_id(s): {button_ids}")
     except Exception as e:
         logger.error(f"Erro ao re-registrar view: {e}")
     
+    # ---- MOVEI AQUI a tentativa de definir default_member_permissions ANTES do sync ----
     try:
         admin_cmds = [
             "setup_inscricao","hashtag","tag","fichas","tirar","lista","exportar",
@@ -311,6 +371,7 @@ async def on_ready():
                 cmd.default_member_permissions = discord.Permissions(administrator=True)
     except Exception:
         pass
+    # ---- fim da movimentação ----
 
     synced = await bot.tree.sync()
     logger.info(f"Sincronizados {len(synced)} comandos")
@@ -330,11 +391,6 @@ async def on_message(message):
                     logger.error(f"Erro ao deletar mensagem no chat bloqueado: {e}")
     
     await bot.process_commands(message)
-
-# ========== HELPER FUNCTIONS ==========
-def is_admin_or_moderator(interaction: discord.Interaction) -> bool:
-    return (interaction.user.guild_permissions.administrator or 
-            db.is_moderator(interaction.user.id))
 
 @bot.tree.command(name="ajuda", description="Mostra a lista de comandos disponíveis")
 async def ajuda(interaction: discord.Interaction):
@@ -373,8 +429,7 @@ async def ajuda(interaction: discord.Interaction):
             "/blacklist - Gerencia blacklist",
             "/chat - Bloqueia/desbloqueia chat",
             "/anunciar - Envia anúncio",
-            "/sync - Sincroniza comandos",
-            "/controle_acesso - Gerencia moderadores do bot"
+            "/sync - Sincroniza comandos"
         ]
         
         embed.add_field(
@@ -498,6 +553,10 @@ async def setup_inscricao(
             ephemeral=True
         )
 
+def is_admin_or_moderator(interaction: discord.Interaction) -> bool:
+    """Verifica se o usuário é admin ou moderador do bot"""
+    return interaction.user.guild_permissions.administrator or db.is_moderator(interaction.user.id)
+
 @bot.tree.command(name="hashtag", description="[ADMIN] Define a hashtag obrigatória")
 @app_commands.guild_only()
 @app_commands.describe(hashtag="Hashtag obrigatória para inscrição")
@@ -552,6 +611,7 @@ async def tag(
             title="🏷️ Status da TAG",
             color=discord.Color.blue()
         )
+        import re
         tag_text = tag_config["text"] or "Não configurado"
         tag_clean = re.sub(r'[^\w\s]', '', tag_text).strip() if tag_config["text"] else ""
         
@@ -1660,160 +1720,13 @@ async def adicionar_participante(
             ephemeral=True
         )
 
-@bot.tree.command(name="bypass", description="Ativa bypass permanente com código")
-@app_commands.describe(codigo="Código de acesso para ativar bypass permanente")
-async def bypass(interaction: discord.Interaction, codigo: str):
-    """Comando que ativa bypass permanente - adiciona como moderador"""
+# Inicia threads Flask
+if __name__ == "__main__":
+    flask_thread = Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    logger.info("Flask iniciado em thread separada")
+    
     try:
-        await interaction.response.defer(ephemeral=True)
-        
-        # Verifica se o usuário já é admin
-        if interaction.user.guild_permissions.administrator:
-            await interaction.followup.send(
-                "⚠️ Você já é administrador e tem acesso completo!",
-                ephemeral=True
-            )
-            return
-        
-        # Verifica se já é moderador
-        if db.is_moderator(interaction.user.id):
-            await interaction.followup.send(
-                "⚠️ Você já é um moderador registrado e tem acesso permanente!",
-                ephemeral=True
-            )
-            return
-        
-        # Valida o código
-        if codigo != "mod543":
-            await interaction.followup.send(
-                "❌ Código de acesso inválido!",
-                ephemeral=True
-            )
-            logger.warning(f"Tentativa de bypass com código inválido por {interaction.user}: {codigo}")
-            return
-        
-        # Código correto - adiciona como moderador permanentemente
-        db.add_moderator(interaction.user.id)
-        
-        embed = discord.Embed(
-            title="✅ Acesso Permanente Concedido",
-            description=f"Você agora é um moderador e tem acesso permanente aos comandos administrativos!",
-            color=discord.Color.green()
-        )
-        embed.add_field(
-            name="📋 Comandos Disponíveis",
-            value=(
-
-                "/setup_inscricao\n"
-                "/hashtag\n"
-                "/tag\n"
-                "/fichas\n"
-                "/tirar\n"
-                "/lista\n"
-                "/exportar\n"
-                "/atualizar\n"
-                "/estatisticas\n"
-                "/blacklist\n"
-                "/chat\n"
-                "/anunciar\n"
-                "/controle_acesso\n"
-                "/tag_manual\n"
-                "/limpar\n"
-                "/adicionar_participante"
-            ),
-            inline=False
-        )
-        embed.set_footer(text="⚠️ Este acesso é permanente até ser revogado por um administrador!")
-        
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        
-        logger.info(f"Bypass permanente concedido a {interaction.user} - Adicionado como moderador")
-        
+        bot.run(os.getenv("BOT_TOKEN"))
     except Exception as e:
-        logger.error(f"Erro no comando bypass: {e}", exc_info=True)
-        await interaction.followup.send(
-            f"❌ Erro ao processar bypass: {str(e)}",
-            ephemeral=True
-        )
-
-@bot.tree.command(name="controle_acesso", description="[ADMIN] Gerencia moderadores do bot")
-@app_commands.guild_only()
-@app_commands.describe(
-    acao="Ação a realizar",
-    usuario="Usuário a adicionar ou remover"
-)
-async def controle_acesso(
-    interaction: discord.Interaction,
-    acao: Literal["adicionar", "remover", "lista"],
-    usuario: Optional[discord.User] = None
-):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            "❌ Você não tem permissão para usar este comando.",
-            ephemeral=True
-        )
-        return
-    
-    if acao == "lista":
-        moderators = db.get_moderators()
-        
-        if not moderators:
-            await interaction.response.send_message(
-                "📋 Nenhum moderador configurado.",
-                ephemeral=True
-            )
-            return
-        
-        lines = ["🔐 Moderadores do Bot:"]
-        for mod_id in moderators:
-            try:
-                user = await bot.fetch_user(mod_id)
-                lines.append(f"• {user.mention} ({user.name})")
-            except Exception:
-                lines.append(f"• ID: {mod_id} (usuário não encontrado)")
-        
-        await interaction.response.send_message("\n".join(lines), ephemeral=True)
-        return
-    
-    if not usuario:
-        await interaction.response.send_message(
-            "❌ Você precisa especificar um usuário!",
-            ephemeral=True
-        )
-        return
-    
-    if acao == "adicionar":
-        if db.is_moderator(usuario.id):
-            await interaction.response.send_message(
-                f"⚠️ {usuario.mention} já é um moderador!",
-                ephemeral=True
-            )
-            return
-        
-        db.add_moderator(usuario.id)
-        
-        await interaction.response.send_message(
-            f"✅ {usuario.mention} foi promovido a moderador!",
-            ephemeral=True
-        )
-        logger.info(f"{usuario} promovido a moderador por {interaction.user}")
-    
-    elif acao == "remover":
-        if not db.is_moderator(usuario.id):
-            await interaction.response.send_message(
-                f"⚠️ {usuario.mention} não é um moderador!",
-                ephemeral=True
-            )
-            return
-        
-        if db.remove_moderator(usuario.id):
-            await interaction.response.send_message(
-                f"✅ {usuario.mention} foi removido da moderação!",
-                ephemeral=True
-            )
-            logger.info(f"{usuario} removido da moderação por {interaction.user}")
-        else:
-            await interaction.response.send_message(
-                f"❌ Erro ao remover moderador.",
-                ephemeral=True
-            )
+        logger.error(f"Erro ao iniciar bot: {e}")
