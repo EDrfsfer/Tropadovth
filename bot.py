@@ -429,6 +429,8 @@ async def ajuda(interaction: discord.Interaction):
             "/blacklist - Gerencia blacklist",
             "/chat - Bloqueia/desbloqueia chat",
             "/anunciar - Envia anúncio",
+            "/controle_acesso - Gerencia moderadores do bot",
+            "/bypass - Acesso total com código de segurança",
             "/sync - Sincroniza comandos"
         ]
         
