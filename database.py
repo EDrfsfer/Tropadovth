@@ -8,17 +8,14 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Tenta usar MongoDB primeiro, fallback para JSON local
 MONGODB_URI = os.getenv("MONGODB_URI")
 USE_MONGO = bool(MONGODB_URI)
 
-# Variável global para dados em memória
 _db_cache = {}
 
 if USE_MONGO:
     try:
         client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-        # Testa a conexão
         client.server_info()
         db_mongo = client["discord_bot"]
         collection = db_mongo["bot_data"]
