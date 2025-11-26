@@ -60,7 +60,6 @@ def load_db():
         except Exception as e:
             logger.warning(f"Erro ao carregar MongoDB: {e}")
     
-    # Fallback para arquivo JSON
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, 'r', encoding='utf-8') as f:
@@ -70,7 +69,6 @@ def load_db():
         except Exception as e:
             logger.error(f"Erro ao carregar JSON: {e}")
     
-    # Cria novo banco padrão
     _db_cache = get_default_db()
     save_db(_db_cache)
     return _db_cache
@@ -84,7 +82,6 @@ def save_db(data=None):
     else:
         data = _db_cache
     
-    # Salva em JSON sempre (backup local)
     try:
         with open(DB_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -92,7 +89,6 @@ def save_db(data=None):
     except Exception as e:
         logger.error(f"Erro ao salvar JSON: {e}")
     
-    # Tenta salvar no MongoDB também
     if USE_MONGO and db_mongo:
         try:
             data_to_save = data.copy()
@@ -108,8 +104,6 @@ def save_db(data=None):
 def get_all_data():
     """Retorna todos os dados em memória"""
     return _db_cache
-
-# ===== FUNÇÕES DE PARTICIPANTES =====
 
 def add_participant(user_id, first_name, last_name, tickets, message_id=None):
     """Adiciona um participante"""
@@ -161,8 +155,6 @@ def clear_participants():
     _db_cache["participants"] = {}
     save_db()
 
-# ===== FUNÇÕES DE CARGOS BÔNUS =====
-
 def add_bonus_role(role_id, quantity, abbreviation):
     """Adiciona um cargo bônus"""
     _db_cache["bonus_roles"][str(role_id)] = {
@@ -183,8 +175,6 @@ def remove_bonus_role(role_id):
         return True
     return False
 
-# ===== FUNÇÕES DE HASHTAG =====
-
 def set_hashtag(hashtag):
     """Define a hashtag obrigatória"""
     _db_cache["hashtag"] = hashtag
@@ -196,9 +186,7 @@ def get_hashtag():
 
 def is_hashtag_locked():
     """Verifica se a hashtag está bloqueada"""
-    return False  # Implemente sua lógica se necessário
-
-# ===== FUNÇÕES DE TAG =====
+    return False
 
 def set_tag(enabled, text=None, quantity=1):
     """Configura a TAG do servidor"""
@@ -212,8 +200,6 @@ def set_tag(enabled, text=None, quantity=1):
 def get_tag():
     """Retorna configuração da TAG"""
     return _db_cache["tag"]
-
-# ===== FUNÇÕES DE CANAL =====
 
 def set_inscricao_channel(channel_id):
     """Define o canal de inscrições"""
@@ -245,8 +231,6 @@ def get_button_message_id():
     """Retorna o ID da mensagem do botão"""
     return _db_cache["button_message_id"]
 
-# ===== FUNÇÕES DE INSCRIÇÕES =====
-
 def set_inscricoes_closed(closed):
     """Define se as inscrições estão fechadas"""
     _db_cache["inscricoes_closed"] = closed
@@ -255,8 +239,6 @@ def set_inscricoes_closed(closed):
 def get_inscricoes_closed():
     """Verifica se as inscrições estão fechadas"""
     return _db_cache["inscricoes_closed"]
-
-# ===== FUNÇÕES DE BLACKLIST =====
 
 def add_to_blacklist(user_id, reason, banned_by=None):
     """Adiciona usuário à blacklist"""
@@ -282,8 +264,6 @@ def is_blacklisted(user_id):
     """Verifica se o usuário está na blacklist"""
     return str(user_id) in _db_cache["blacklist"]
 
-# ===== FUNÇÕES DE CHAT LOCK =====
-
 def set_chat_lock(enabled, channel_id=None):
     """Define o chat lock"""
     _db_cache["chat_lock"] = {
@@ -295,8 +275,6 @@ def set_chat_lock(enabled, channel_id=None):
 def get_chat_lock():
     """Retorna configuração do chat lock"""
     return _db_cache["chat_lock"]
-
-# ===== FUNÇÕES DE MODERADORES =====
 
 def add_moderator(user_id):
     """Adiciona um moderador"""
@@ -320,8 +298,6 @@ def is_moderator(user_id):
     """Verifica se o usuário é moderador"""
     return str(user_id) in _db_cache["moderators"]
 
-# ===== FUNÇÕES DE ESTATÍSTICAS =====
-
 def get_statistics():
     """Retorna estatísticas do sorteio"""
     participants = _db_cache["participants"]
@@ -335,15 +311,12 @@ def get_statistics():
     for participant in participants.values():
         tickets = participant.get("tickets", {})
         
-        # Conta fichas totais
         total_tickets += sum(int(t) if isinstance(t, (int, str)) else t.get("quantity", 1) 
                            for t in tickets.values() if t)
         
-        # Conta participantes com TAG
         if tickets.get("tag") or tickets.get("manual_tag"):
             participants_with_tag += 1
         
-        # Agrupa por cargo
         roles = tickets.get("roles", {})
         for role_id, role_info in roles.items():
             if role_id not in tickets_by_role:
@@ -363,8 +336,6 @@ def get_statistics():
         "blacklist_count": len(_db_cache["blacklist"])
     }
 
-# ===== FUNÇÕES DE TAG MANUAL =====
-
 def add_manual_tag(user_id, quantity=1):
     """Adiciona TAG manual para um usuário"""
     if str(user_id) in _db_cache["participants"]:
@@ -376,13 +347,10 @@ def add_manual_tag(user_id, quantity=1):
         participant["tickets"]["manual_tag"] = int(current_manual_tag) + int(quantity)
         save_db()
 
-# ===== FUNÇÕES DE LIMPEZA =====
-
 def clear_all():
     """Limpa todos os dados"""
     global _db_cache
     _db_cache = get_default_db()
     save_db()
 
-# Carrega dados ao iniciar
 _db_cache = load_db()
