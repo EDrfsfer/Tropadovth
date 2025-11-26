@@ -1,149 +1,109 @@
+from pymongo import MongoClient
 import json
 import os
+from dotenv import load_dotenv
 import logging
-from datetime import datetime
-from typing import Optional, Dict, Any
-from pymongo import MongoClient
-import subprocess
-import psycopg2
-from psycopg2.extras import Json
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Conexão com MongoDB
+# Tenta usar MongoDB primeiro, fallback para JSON local
 MONGODB_URI = os.getenv("MONGODB_URI")
-client = MongoClient(MONGODB_URI)
-db_mongo = client["discord_bot"]
+USE_MONGO = bool(MONGODB_URI)
 
-# PostgreSQL
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Variável global para dados em memória
+_db_cache = {}
 
-DB_FILE = "db.json"  # Caminho do arquivo JSON
-
-# ========== DATABASE ABSTRACTION ==========
-
-def get_connection():
-    """Cria conexão com PostgreSQL"""
-    return psycopg2.connect(DATABASE_URL)
-
-def init_db():
-    """Cria tabela se não existir"""
+if USE_MONGO:
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS bot_data (
-                id INTEGER PRIMARY KEY DEFAULT 1,
-                data JSONB NOT NULL
-            )
-        """)
-        conn.commit()
-        cur.close()
-        conn.close()
+        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        # Testa a conexão
+        client.server_info()
+        db_mongo = client["discord_bot"]
+        collection = db_mongo["bot_data"]
+        logger.info("✅ MongoDB conectado com sucesso!")
     except Exception as e:
-        logger.error(f"Erro ao inicializar DB: {e}")
+        logger.warning(f"⚠️ MongoDB não disponível, usando JSON local: {e}")
+        USE_MONGO = False
+        db_mongo = None
 
-def load_db() -> Dict[str, Any]:
-    """Carrega dados do PostgreSQL"""
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT data FROM bot_data WHERE id = 1")
-        result = cur.fetchone()
-        cur.close()
-        conn.close()
-        
-        if result:
-            return json.loads(result[0])
-    except Exception as e:
-        logger.error(f"Erro ao carregar PostgreSQL: {e}")
-    
-    return get_default_db()
+DB_FILE = "database.json"
 
-def save_db(data: Dict[str, Any]):
-    """Salva dados no PostgreSQL"""
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO bot_data (id, data) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET data = %s",
-            (Json(data), Json(data))
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        logger.error(f"Erro ao salvar PostgreSQL: {e}")
-
-# Inicializa banco no startup
-init_db()
-
-# ========== LOAD/SAVE ==========
-
-def load_db_mongo() -> Dict[str, Any]:
-    """Carrega dados do MongoDB"""
-    try:
-        data = db_mongo.config.find_one({"_id": "main"})
-        if data:
-            data.pop("_id", None)  # Remove o _id do MongoDB
-            return data
-    except Exception as e:
-        logger.error(f"Erro ao carregar MongoDB: {e}")
-    
-    return get_default_db()
-
-def save_db_mongo(data: Dict[str, Any]):
-    """Salva dados no arquivo JSON e faz push para GitHub"""
-    try:
-        with open(DB_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        
-        # Tenta fazer commit automático (opcional)
-        try:
-            subprocess.run(
-                ["git", "add", DB_FILE],
-                capture_output=True,
-                timeout=5
-            )
-            subprocess.run(
-                ["git", "commit", "-m", f"Auto-save database - {datetime.utcnow().isoformat()}"],
-                capture_output=True,
-                timeout=5
-            )
-            subprocess.run(
-                ["git", "push"],
-                capture_output=True,
-                timeout=10
-            )
-            logger.info("Database sincronizado com GitHub")
-        except Exception as e:
-            logger.warning(f"Não foi possível fazer push automático: {e}")
-            
-    except Exception as e:
-        logger.error(f"Erro ao salvar database: {e}")
-
-def get_default_db() -> Dict[str, Any]:
-    """Estrutura padrão do banco"""
+def get_default_db():
+    """Retorna estrutura padrão do banco de dados"""
     return {
         "participants": {},
         "bonus_roles": {},
-        "hashtag": {"value": None, "locked": False},
-        "tag": {"enabled": False, "text": None, "quantity": 1},
+        "hashtag": "",
+        "tag": {"enabled": False, "text": "", "quantity": 1},
         "inscricao_channel": None,
         "button_message_id": None,
+        "inscricoes_closed": False,
         "blacklist": {},
         "chat_lock": {"enabled": False, "channel_id": None},
         "moderators": [],
-        "inscricoes_closed": False
     }
 
-# Carregar DB na inicialização
-_db = load_db()
+def load_db():
+    """Carrega dados do MongoDB ou arquivo JSON local"""
+    global _db_cache
+    
+    if USE_MONGO and db_mongo:
+        try:
+            data = collection.find_one({"_id": "main"})
+            if data:
+                data.pop("_id", None)
+                _db_cache = data
+                logger.info("📥 Dados carregados do MongoDB")
+                return data
+        except Exception as e:
+            logger.warning(f"Erro ao carregar MongoDB: {e}")
+    
+    # Fallback para arquivo JSON
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, 'r', encoding='utf-8') as f:
+                _db_cache = json.load(f)
+                logger.info("📥 Dados carregados do arquivo JSON")
+                return _db_cache
+        except Exception as e:
+            logger.error(f"Erro ao carregar JSON: {e}")
+    
+    # Cria novo banco padrão
+    _db_cache = get_default_db()
+    save_db(_db_cache)
+    return _db_cache
 
-def _save():
-    """Helper para salvar DB"""
-    global _db
-    save_db(_db)
+def save_db(data=None):
+    """Salva dados no MongoDB E no arquivo JSON (backup local)"""
+    global _db_cache
+    
+    if data:
+        _db_cache = data
+    else:
+        data = _db_cache
+    
+    # Salva em JSON sempre (backup local)
+    try:
+        with open(DB_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.debug("💾 Dados salvos em JSON local")
+    except Exception as e:
+        logger.error(f"Erro ao salvar JSON: {e}")
+    
+    # Tenta salvar no MongoDB também
+    if USE_MONGO and db_mongo:
+        try:
+            data_to_save = data.copy()
+            collection.replace_one(
+                {"_id": "main"},
+                {"_id": "main", **data_to_save},
+                upsert=True
+            )
+            logger.debug("☁️ Dados salvos no MongoDB")
+        except Exception as e:
+            logger.warning(f"Aviso ao salvar MongoDB: {e}")
 
 # ========== HASHTAG ==========
 
