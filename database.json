@@ -1,13 +1,10 @@
 {
     "participants": {},
     "bonus_roles": {},
-    "hashtag": {
-        "value": null,
-        "locked": false
-    },
+    "hashtag": "",
     "tag": {
         "enabled": false,
-        "text": null,
+        "text": "",
         "quantity": 1
     },
     "inscricao_channel": 1430852198673420424,
