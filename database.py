@@ -3,98 +3,124 @@ import os
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
+from pymongo import MongoClient
+import subprocess
+import psycopg2
+from psycopg2.extras import Json
 
 logger = logging.getLogger(__name__)
 
-DB_FILE = "database.json"
+# Conexão com MongoDB
+MONGODB_URI = os.getenv("MONGODB_URI")
+client = MongoClient(MONGODB_URI)
+db_mongo = client["discord_bot"]
+
+# PostgreSQL
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+DB_FILE = "db.json"  # Caminho do arquivo JSON
+
+# ========== DATABASE ABSTRACTION ==========
+
+def get_connection():
+    """Cria conexão com PostgreSQL"""
+    return psycopg2.connect(DATABASE_URL)
+
+def init_db():
+    """Cria tabela se não existir"""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS bot_data (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                data JSONB NOT NULL
+            )
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Erro ao inicializar DB: {e}")
+
+def load_db() -> Dict[str, Any]:
+    """Carrega dados do PostgreSQL"""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT data FROM bot_data WHERE id = 1")
+        result = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if result:
+            return json.loads(result[0])
+    except Exception as e:
+        logger.error(f"Erro ao carregar PostgreSQL: {e}")
+    
+    return get_default_db()
+
+def save_db(data: Dict[str, Any]):
+    """Salva dados no PostgreSQL"""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO bot_data (id, data) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET data = %s",
+            (Json(data), Json(data))
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Erro ao salvar PostgreSQL: {e}")
+
+# Inicializa banco no startup
+init_db()
 
 # ========== LOAD/SAVE ==========
 
-def load_db() -> Dict[str, Any]:
-    """Carrega dados do arquivo JSON"""
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "r", encoding="utf-8") as f:
-                content = f.read().strip()
-                if not content:
-                    logger.warning("database.json vazio, criando novo")
-                    return get_default_db()
-                data = json.loads(content)
-                return _normalize_db(data)
-        except json.JSONDecodeError as e:
-            logger.error(f"Erro ao decodificar database.json: {e}")
-            return get_default_db()
-        except Exception as e:
-            logger.error(f"Erro ao carregar database.json: {e}")
-            return get_default_db()
-    logger.info("database.json não existe, criando novo")
+def load_db_mongo() -> Dict[str, Any]:
+    """Carrega dados do MongoDB"""
+    try:
+        data = db_mongo.config.find_one({"_id": "main"})
+        if data:
+            data.pop("_id", None)  # Remove o _id do MongoDB
+            return data
+    except Exception as e:
+        logger.error(f"Erro ao carregar MongoDB: {e}")
+    
     return get_default_db()
 
-def _normalize_db(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Normaliza estrutura antiga para nova se necessário"""
-    if not data:
-        return get_default_db()
-    
-    # Se já tem a estrutura correta, retorna
-    if "hashtag" in data and isinstance(data.get("hashtag"), dict) and "value" in data.get("hashtag", {}):
-        return data
-    
-    # Migra estrutura antiga
-    normalized = get_default_db()
-    
-    # Copia dados existentes com segurança
+def save_db_mongo(data: Dict[str, Any]):
+    """Salva dados no arquivo JSON e faz push para GitHub"""
     try:
-        if "participants" in data and isinstance(data["participants"], dict):
-            normalized["participants"] = data["participants"]
-        if "bonus_roles" in data and isinstance(data["bonus_roles"], dict):
-            normalized["bonus_roles"] = data["bonus_roles"]
-        if "blacklist" in data and isinstance(data["blacklist"], dict):
-            normalized["blacklist"] = data["blacklist"]
-        if "inscricao_channel" in data:
-            normalized["inscricao_channel"] = data["inscricao_channel"]
-        if "button_message_id" in data:
-            normalized["button_message_id"] = data["button_message_id"]
-        if "chat_lock" in data and isinstance(data["chat_lock"], dict):
-            normalized["chat_lock"] = data["chat_lock"]
-        if "moderators" in data and isinstance(data["moderators"], list):
-            normalized["moderators"] = data["moderators"]
-        if "inscricoes_closed" in data:
-            normalized["inscricoes_closed"] = data["inscricoes_closed"]
+        with open(DB_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
         
-        # Migra hashtag
-        if "hashtag" in data:
-            if isinstance(data["hashtag"], str):
-                normalized["hashtag"]["value"] = data["hashtag"]
-            elif isinstance(data["hashtag"], dict):
-                if "value" in data["hashtag"]:
-                    normalized["hashtag"]["value"] = data["hashtag"]["value"]
-        
-        # Migra tag
-        if "tag" in data and isinstance(data["tag"], dict):
-            normalized["tag"].update(data["tag"])
-    
+        # Tenta fazer commit automático (opcional)
+        try:
+            subprocess.run(
+                ["git", "add", DB_FILE],
+                capture_output=True,
+                timeout=5
+            )
+            subprocess.run(
+                ["git", "commit", "-m", f"Auto-save database - {datetime.utcnow().isoformat()}"],
+                capture_output=True,
+                timeout=5
+            )
+            subprocess.run(
+                ["git", "push"],
+                capture_output=True,
+                timeout=10
+            )
+            logger.info("Database sincronizado com GitHub")
+        except Exception as e:
+            logger.warning(f"Não foi possível fazer push automático: {e}")
+            
     except Exception as e:
-        logger.error(f"Erro ao normalizar database: {e}")
-    
-    return normalized
-
-def save_db(data: Dict[str, Any]):
-    """Salva dados no arquivo JSON"""
-    try:
-        # Cria backup se arquivo existe
-        if os.path.exists(DB_FILE):
-            try:
-                with open(f"{DB_FILE}.backup", "w", encoding="utf-8") as f:
-                    with open(DB_FILE, "r", encoding="utf-8") as orig:
-                        f.write(orig.read())
-            except:
-                pass
-        
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        logger.debug("Database salvo com sucesso")
-    except Exception as e:
-        logger.error(f"Erro ao salvar database.json: {e}")
+        logger.error(f"Erro ao salvar database: {e}")
 
 def get_default_db() -> Dict[str, Any]:
     """Estrutura padrão do banco"""
