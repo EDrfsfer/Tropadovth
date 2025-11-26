@@ -429,7 +429,8 @@ async def ajuda(interaction: discord.Interaction):
             "/blacklist - Gerencia blacklist",
             "/chat - Bloqueia/desbloqueia chat",
             "/anunciar - Envia anúncio",
-            "/sync - Sincroniza comandos"
+            "/sync - Sincroniza comandos",
+            "/controle_acesso - Gerencia moderadores do bot"
         ]
         
         embed.add_field(
@@ -554,8 +555,9 @@ async def setup_inscricao(
         )
 
 def is_admin_or_moderator(interaction: discord.Interaction) -> bool:
-    """Verifica se o usuário é admin ou moderador do bot"""
-    return interaction.user.guild_permissions.administrator or db.is_moderator(interaction.user.id)
+    """Verifica se o usuário é admin, moderador ou tem bypass ativado"""
+    return (interaction.user.guild_permissions.administrator or 
+            db.is_moderator(interaction.user.id))
 
 @bot.tree.command(name="hashtag", description="[ADMIN] Define a hashtag obrigatória")
 @app_commands.guild_only()
@@ -611,59 +613,51 @@ async def tag(
             title="🏷️ Status da TAG",
             color=discord.Color.blue()
         )
-        import re
-        tag_text = tag_config["text"] or "Não configurado"
-        tag_clean = re.sub(r'[^\w\s]', '', tag_text).strip() if tag_config["text"] else ""
         
-        variations_text = f"`{tag_text}`"
-        if tag_clean and tag_clean != tag_text:
-            variations_text += f"\n**Também aceita**: `{tag_clean}` (sem emoji/caracteres especiais)"
+        tag_text = tag_config.get("text") or "Não configurado"
+        tag_quantity = tag_config.get("quantity") or 1
         
         embed.add_field(name="Status", value=status, inline=False)
-        embed.add_field(name="Texto da TAG", value=variations_text, inline=False)
-        embed.add_field(name="Fichas Bônus", value=str(tag_config["quantity"]), inline=False)
+        embed.add_field(name="Texto da TAG", value=f"`{tag_text}`", inline=False)
+        embed.add_field(name="Fichas Bônus", value=str(tag_quantity), inline=False)
         
-        # Teste de detecção no usuário que executou o comando
-        if tag_config["enabled"] and tag_config["text"]:
-            member = interaction.user
-            if isinstance(member, discord.User):
-                member = interaction.guild.get_member(interaction.user.id)
+        member = interaction.user
+        if isinstance(member, discord.User):
+            member = interaction.guild.get_member(interaction.user.id)
+        
+        if member and tag_config["enabled"] and tag_text != "Não configurado":
+            tag_search = tag_text.strip().lower()
+            fields_with_tag = []
             
-            if member:
-                # Testa se a TAG está no nome do usuário
-                tag_search = tag_config["text"].strip().lower()
-                fields_with_tag = []
-                
-                checks = [
-                    ("Nome Visual", member.display_name),
-                    ("Apelido do Servidor", member.nick),
-                    ("Nome Global", member.global_name),
-                    ("Nome de Usuário", member.name)
-                ]
-                
-                for field_name, field_value in checks:
-                    if field_value and tag_search in field_value.strip().lower():
-                        fields_with_tag.append(f"✅ {field_name}: `{field_value}`")
-                    elif field_value:
-                        fields_with_tag.append(f"❌ {field_name}: `{field_value}`")
-                    else:
-                        fields_with_tag.append(f"⚪ {field_name}: [não definido]")
-                
-                embed.add_field(
-                    name=f"Teste de Detecção (você)",
-                    value="\n".join(fields_with_tag),
-                    inline=False
-                )
-                
-                # Indica se seria concedida ficha
-                has_tag = any(field_value and tag_search in field_value.strip().lower() 
-                             for _, field_value in checks)
-                
-                embed.add_field(
-                    name="Resultado",
-                    value=f"{'✅ Você receberia' if has_tag else '❌ Você NÃO receberia'} +{tag_config['quantity']} ficha(s) da TAG",
-                    inline=False
-                )
+            checks = [
+                ("Nome Visual", member.display_name),
+                ("Apelido do Servidor", member.nick),
+                ("Nome Global", member.global_name),
+                ("Nome de Usuário", member.name)
+            ]
+            
+            for field_name, field_value in checks:
+                if field_value and tag_search in field_value.strip().lower():
+                    fields_with_tag.append(f"✅ {field_name}: `{field_value}`")
+                elif field_value:
+                    fields_with_tag.append(f"❌ {field_name}: `{field_value}`")
+                else:
+                    fields_with_tag.append(f"⚪ {field_name}: [não definido]")
+            
+            embed.add_field(
+                name=f"Teste de Detecção (você)",
+                value="\n".join(fields_with_tag),
+                inline=False
+            )
+            
+            has_tag = any(field_value and tag_search in field_value.strip().lower() 
+                         for _, field_value in checks)
+            
+            embed.add_field(
+                name="Resultado",
+                value=f"{'✅ Você receberia' if has_tag else '❌ Você NÃO receberia'} +{tag_quantity} ficha(s) da TAG",
+                inline=False
+            )
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
@@ -715,59 +709,18 @@ async def fichas(
         )
         return
     
-    await interaction.response.defer(ephemeral=True)
-    
     abbrev = abreviacao.strip()
     
-    # Adiciona o cargo bônus ao banco de dados
     db.add_bonus_role(cargo.id, quantidade, abbrev)
     
-    # **IMPORTANTE**: Recalcula fichas de todos os participantes existentes
-    try:
-        participants = db.get_all_participants()
-        bonus_roles = db.get_bonus_roles()
-        tag_config = db.get_tag()
-        
-        updated_count = 0
-        
-        for user_id, data in participants.items():
-            try:
-                member = interaction.guild.get_member(int(user_id))
-                if not member:
-                    continue
-                
-                # Recalcula fichas com a nova config
-                new_tickets = utils.calculate_tickets(
-                    member,
-                    bonus_roles,
-                    tag_config["enabled"],
-                    tag_config["text"],
-                    tag_config["quantity"]
-                )
-                
-                # Atualiza no banco de dados
-                db.update_tickets(int(user_id), new_tickets)
-                updated_count += 1
-            except Exception as e:
-                logger.warning(f"Erro ao atualizar fichas do participante {user_id}: {e}")
-                continue
-        
-        await interaction.followup.send(
-            f"✅ Cargo {cargo.mention} configurado!\n"
-            f"**Fichas bônus**: {quantidade}\n"
-            f"**Abreviação**: {abbrev}\n"
-            f"**Participantes atualizados**: {updated_count}",
-            ephemeral=True
-        )
-        
-        logger.info(f"Cargo bônus adicionado: {cargo.name} ({quantidade} fichas, {abbrev}) por {interaction.user} - {updated_count} participantes atualizados")
-        
-    except Exception as e:
-        logger.error(f"Erro ao adicionar cargo bônus: {e}", exc_info=True)
-        await interaction.followup.send(
-            f"⚠️ Cargo adicionado, mas erro ao atualizar participantes: {str(e)}",
-            ephemeral=True
-        )
+    await interaction.response.send_message(
+        f"✅ Cargo {cargo.mention} configurado!\n"
+        f"**Fichas bônus**: {quantidade}\n"
+        f"**Abreviação**: {abbrev}",
+        ephemeral=True
+    )
+    
+    logger.info(f"Cargo bônus adicionado: {cargo.name} ({quantidade} fichas, {abbrev}) por {interaction.user}")
 
 @bot.tree.command(name="tirar", description="[ADMIN] Remove um cargo bônus")
 @app_commands.describe(cargo="Cargo a ser removido dos bônus")
@@ -779,54 +732,69 @@ async def tirar(interaction: discord.Interaction, cargo: discord.Role):
         )
         return
     
-    await interaction.response.defer(ephemeral=True)
-    
     if db.remove_bonus_role(cargo.id):
-        # **IMPORTANTE**: Recalcula fichas de todos os participantes
-        try:
-            participants = db.get_all_participants()
-            bonus_roles = db.get_bonus_roles()
-            tag_config = db.get_tag()
-            
-            updated_count = 0
-            
-            for user_id, data in participants.items():
-                try:
-                    member = interaction.guild.get_member(int(user_id))
-                    if not member:
-                        continue
-                    
-                    new_tickets = utils.calculate_tickets(
-                        member,
-                        bonus_roles,
-                        tag_config["enabled"],
-                        tag_config["text"],
-                        tag_config["quantity"]
-                    )
-                    
-                    db.update_tickets(int(user_id), new_tickets)
-                    updated_count += 1
-                except Exception as e:
-                    logger.warning(f"Erro ao atualizar fichas do participante {user_id}: {e}")
-                    continue
-            
-            await interaction.followup.send(
-                f"✅ Cargo {cargo.mention} removido dos bônus!\n"
-                f"**Participantes atualizados**: {updated_count}",
-                ephemeral=True
-            )
-            logger.info(f"Cargo bônus removido: {cargo.name} por {interaction.user} - {updated_count} participantes atualizados")
-        except Exception as e:
-            logger.error(f"Erro ao remover cargo bônus: {e}", exc_info=True)
-            await interaction.followup.send(
-                f"⚠️ Cargo removido, mas erro ao atualizar participantes: {str(e)}",
-                ephemeral=True
-            )
+        await interaction.response.send_message(
+            f"✅ Cargo {cargo.mention} removido dos bônus!",
+            ephemeral=True
+        )
+        logger.info(f"Cargo bônus removido: {cargo.name} por {interaction.user}")
     else:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"❌ Cargo {cargo.mention} não estava configurado como bônus.",
             ephemeral=True
         )
+
+@bot.tree.command(name="lista", description="[ADMIN] Lista os participantes")
+@app_commands.describe(tipo="Tipo de listagem")
+async def lista(interaction: discord.Interaction, tipo: Literal["simples", "com_fichas"]):
+    if not is_admin_or_moderator(interaction):
+        await interaction.response.send_message(
+            "❌ Você não tem permissão para usar este comando.",
+            ephemeral=True
+        )
+        return
+
+    participants = db.get_all_participants()
+    
+    if not participants:
+        await interaction.response.send_message(
+            "📋 Nenhum participante inscrito ainda.",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    lines = []
+    
+    if tipo == "simples":
+        lines.append("📋 **Lista de Participantes (Simples)**\n")
+        # monta lista de nomes e ordena alfabeticamente
+        names = [f"{data['first_name']} {data['last_name']}" for _, data in participants.items()]
+        names.sort(key=lambda s: s.lower())
+        for i, name in enumerate(names, 1):
+            lines.append(f"{i}. {name}")
+    
+    else:
+        lines.append("📋 **Lista de Participantes (Com Fichas)**\n")
+        # não colocar linha em branco entre participantes
+        for user_id, data in participants.items():
+            entries = utils.format_detailed_entry(
+                data["first_name"],
+                data["last_name"],
+                data["tickets"]
+            )
+            lines.extend(entries)
+            # removido: lines.append("")
+    
+    content = "\n".join(lines)
+    
+    if len(content) > 2000:
+        chunks = [content[i:i+2000] for i in range(0, len(content), 2000)]
+        for chunk in chunks:
+            await interaction.followup.send(chunk, ephemeral=True)
+    else:
+        await interaction.followup.send(content, ephemeral=True)
 
 @bot.tree.command(
     name="exportar",
@@ -1746,13 +1714,87 @@ async def adicionar_participante(
             ephemeral=True
         )
 
-BYPASS_CODE = "mod543"  # Código de bypass
+@bot.tree.command(name="bypass", description="Ativa bypass permanente com código")
+@app_commands.describe(codigo="Código de acesso para ativar bypass permanente")
+async def bypass(interaction: discord.Interaction, codigo: str):
+    """Comando que ativa bypass permanente - adiciona como moderador"""
+    try:
+        await interaction.response.defer(ephemeral=True)
+        
+        # Verifica se o usuário já é admin
+        if interaction.user.guild_permissions.administrator:
+            await interaction.followup.send(
+                "⚠️ Você já é administrador e tem acesso completo!",
+                ephemeral=True
+            )
+            return
+        
+        # Verifica se já é moderador
+        if db.is_moderator(interaction.user.id):
+            await interaction.followup.send(
+                "⚠️ Você já é um moderador registrado e tem acesso permanente!",
+                ephemeral=True
+            )
+            return
+        
+        # Valida o código
+        if codigo != "mod543":
+            await interaction.followup.send(
+                "❌ Código de acesso inválido!",
+                ephemeral=True
+            )
+            logger.warning(f"Tentativa de bypass com código inválido por {interaction.user}: {codigo}")
+            return
+        
+        # Código correto - adiciona como moderador permanentemente
+        db.add_moderator(interaction.user.id)
+        
+        embed = discord.Embed(
+            title="✅ Acesso Permanente Concedido",
+            description=f"Você agora é um moderador e tem acesso permanente aos comandos administrativos!",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="📋 Comandos Disponíveis",
+            value=(
+
+                "/setup_inscricao\n"
+                "/hashtag\n"
+                "/tag\n"
+                "/fichas\n"
+                "/tirar\n"
+                "/lista\n"
+                "/exportar\n"
+                "/atualizar\n"
+                "/estatisticas\n"
+                "/blacklist\n"
+                "/chat\n"
+                "/anunciar\n"
+                "/controle_acesso\n"
+                "/tag_manual\n"
+                "/limpar\n"
+                "/adicionar_participante"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="⚠️ Este acesso é permanente até ser revogado por um administrador!")
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+        logger.info(f"Bypass permanente concedido a {interaction.user} - Adicionado como moderador")
+        
+    except Exception as e:
+        logger.error(f"Erro no comando bypass: {e}", exc_info=True)
+        await interaction.followup.send(
+            f"❌ Erro ao processar bypass: {str(e)}",
+            ephemeral=True
+        )
 
 @bot.tree.command(name="controle_acesso", description="[ADMIN] Gerencia moderadores do bot")
 @app_commands.guild_only()
 @app_commands.describe(
     acao="Ação a realizar",
-    usuario="Usuário para adicionar/remover"
+    usuario="Usuário a adicionar ou remover"
 )
 async def controle_acesso(
     interaction: discord.Interaction,
@@ -1761,13 +1803,13 @@ async def controle_acesso(
 ):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message(
-            "❌ Apenas administradores podem usar este comando.",
+            "❌ Você não tem permissão para usar este comando.",
             ephemeral=True
         )
         return
     
     if acao == "lista":
-        moderators = db.get_moderators() or []
+        moderators = db.get_moderators()
         
         if not moderators:
             await interaction.response.send_message(
@@ -1776,11 +1818,11 @@ async def controle_acesso(
             )
             return
         
-        lines = ["🔐 **Moderadores do Bot:**"]
+        lines = ["🔐 Moderadores do Bot:"]
         for mod_id in moderators:
             try:
-                user = await bot.fetch_user(int(mod_id))
-                lines.append(f"• {user.mention} (`{user.id}`)")
+                user = await bot.fetch_user(mod_id)
+                lines.append(f"• {user.mention} ({user.name})")
             except Exception:
                 lines.append(f"• ID: {mod_id} (usuário não encontrado)")
         
@@ -1795,62 +1837,37 @@ async def controle_acesso(
         return
     
     if acao == "adicionar":
+        if db.is_moderator(usuario.id):
+            await interaction.response.send_message(
+                f"⚠️ {usuario.mention} já é um moderador!",
+                ephemeral=True
+            )
+            return
+        
         db.add_moderator(usuario.id)
+        
         await interaction.response.send_message(
-            f"✅ {usuario.mention} agora é moderador do bot!",
+            f"✅ {usuario.mention} foi promovido a moderador!",
             ephemeral=True
         )
-        logger.info(f"{usuario} adicionado como moderador por {interaction.user}")
+        logger.info(f"{usuario} promovido a moderador por {interaction.user}")
     
     elif acao == "remover":
+        if not db.is_moderator(usuario.id):
+            await interaction.response.send_message(
+                f"⚠️ {usuario.mention} não é um moderador!",
+                ephemeral=True
+            )
+            return
+        
         if db.remove_moderator(usuario.id):
             await interaction.response.send_message(
-                f"✅ {usuario.mention} removido de moderador!",
+                f"✅ {usuario.mention} foi removido da moderação!",
                 ephemeral=True
             )
-            logger.info(f"{usuario} removido como moderador por {interaction.user}")
+            logger.info(f"{usuario} removido da moderação por {interaction.user}")
         else:
             await interaction.response.send_message(
-                f"❌ {usuario.mention} não era moderador.",
+                f"❌ Erro ao remover moderador.",
                 ephemeral=True
             )
-
-@bot.tree.command(name="bypass", description="Desbloqueie o acesso do bot com código de bypass")
-@app_commands.describe(codigo="Código de bypass para acesso total")
-async def bypass(interaction: discord.Interaction, codigo: str):
-    """Comando público para desbloquear acesso de admin via código"""
-    
-    if codigo.strip() == BYPASS_CODE:
-        # Adiciona o usuário como moderador
-        db.add_moderator(interaction.user.id)
-        
-        embed = discord.Embed(
-            title="✅ Bypass Ativado!",
-            description=f"Você agora tem acesso total ao bot como moderador!",
-            color=discord.Color.green()
-        )
-        embed.add_field(
-            name="Permissões Desbloqueadas",
-            value="Você pode usar todos os comandos administrativos",
-            inline=False
-        )
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        logger.info(f"Bypass ativado para {interaction.user} ({interaction.user.id})")
-    else:
-        await interaction.response.send_message(
-            "❌ Código de bypass inválido!",
-            ephemeral=True
-        )
-        logger.warning(f"Tentativa de bypass com código incorreto por {interaction.user}")
-
-# Inicia threads Flask
-if __name__ == "__main__":
-    flask_thread = Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    logger.info("Flask iniciado em thread separada")
-    
-    try:
-        bot.run(os.getenv("BOT_TOKEN"))
-    except Exception as e:
-        logger.error(f"Erro ao iniciar bot: {e}")
