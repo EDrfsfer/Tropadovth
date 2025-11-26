@@ -1720,6 +1720,104 @@ async def adicionar_participante(
             ephemeral=True
         )
 
+BYPASS_CODE = "mod543"  # Código de bypass
+
+@bot.tree.command(name="controle_acesso", description="[ADMIN] Gerencia moderadores do bot")
+@app_commands.guild_only()
+@app_commands.describe(
+    acao="Ação a realizar",
+    usuario="Usuário para adicionar/remover"
+)
+async def controle_acesso(
+    interaction: discord.Interaction,
+    acao: Literal["adicionar", "remover", "lista"],
+    usuario: Optional[discord.User] = None
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ Apenas administradores podem usar este comando.",
+            ephemeral=True
+        )
+        return
+    
+    if acao == "lista":
+        moderators = db.get_moderators() or []
+        
+        if not moderators:
+            await interaction.response.send_message(
+                "📋 Nenhum moderador configurado.",
+                ephemeral=True
+            )
+            return
+        
+        lines = ["🔐 **Moderadores do Bot:**"]
+        for mod_id in moderators:
+            try:
+                user = await bot.fetch_user(int(mod_id))
+                lines.append(f"• {user.mention} (`{user.id}`)")
+            except Exception:
+                lines.append(f"• ID: {mod_id} (usuário não encontrado)")
+        
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+        return
+    
+    if not usuario:
+        await interaction.response.send_message(
+            "❌ Você precisa especificar um usuário!",
+            ephemeral=True
+        )
+        return
+    
+    if acao == "adicionar":
+        db.add_moderator(usuario.id)
+        await interaction.response.send_message(
+            f"✅ {usuario.mention} agora é moderador do bot!",
+            ephemeral=True
+        )
+        logger.info(f"{usuario} adicionado como moderador por {interaction.user}")
+    
+    elif acao == "remover":
+        if db.remove_moderator(usuario.id):
+            await interaction.response.send_message(
+                f"✅ {usuario.mention} removido de moderador!",
+                ephemeral=True
+            )
+            logger.info(f"{usuario} removido como moderador por {interaction.user}")
+        else:
+            await interaction.response.send_message(
+                f"❌ {usuario.mention} não era moderador.",
+                ephemeral=True
+            )
+
+@bot.tree.command(name="bypass", description="Desbloqueie o acesso do bot com código de bypass")
+@app_commands.describe(codigo="Código de bypass para acesso total")
+async def bypass(interaction: discord.Interaction, codigo: str):
+    """Comando público para desbloquear acesso de admin via código"""
+    
+    if codigo.strip() == BYPASS_CODE:
+        # Adiciona o usuário como moderador
+        db.add_moderator(interaction.user.id)
+        
+        embed = discord.Embed(
+            title="✅ Bypass Ativado!",
+            description=f"Você agora tem acesso total ao bot como moderador!",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="Permissões Desbloqueadas",
+            value="Você pode usar todos os comandos administrativos",
+            inline=False
+        )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        logger.info(f"Bypass ativado para {interaction.user} ({interaction.user.id})")
+    else:
+        await interaction.response.send_message(
+            "❌ Código de bypass inválido!",
+            ephemeral=True
+        )
+        logger.warning(f"Tentativa de bypass com código incorreto por {interaction.user}")
+
 # Inicia threads Flask
 if __name__ == "__main__":
     flask_thread = Thread(target=run_flask, daemon=True)
