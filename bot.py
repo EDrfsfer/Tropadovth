@@ -834,35 +834,54 @@ async def exportar(interaction: discord.Interaction, tipo: Literal['simples','co
         full_name = f"{first} {last}".strip()
 
         if tipo == "simples":
-            # Mantém nome e sobrenome completos
             name = full_name.replace('"', "").replace("'", "")
             lines.append(name)
             continue
 
-        # com_fichas: pegar as mesmas entradas que /lista (usa util para consistência)
-        try:
-            entries = utils.format_detailed_entry(first, last, data.get("tickets", {}), interaction.guild)
-        except Exception:
-            entries = [full_name]
-            tickets = data.get("tickets", {}) or {}
-            for role_info in (tickets.get("roles") or {}).values():
+        # com_fichas: expandir cada ficha
+        tickets = data.get("tickets", {}) or {}
+        
+        logger.info(f"DEBUG EXPORTAR: {full_name} - tickets={tickets}")
+        
+        # Adiciona linha base com o nome
+        lines.append(full_name)
+        
+        # Processa cargos
+        roles = tickets.get("roles", {}) or {}
+        for role_id, role_info in roles.items():
+            try:
                 qty = int(role_info.get("quantity", role_info.get("qty", 1)) or 1)
                 abbr = (role_info.get("abbreviation") or role_info.get("abreviation") or "").strip()
+                
+                logger.info(f"DEBUG ROLE: {abbr} = {qty} fichas")
+                
                 for _ in range(qty):
-                    entries.append(f"{full_name} {abbr}".strip())
-            tag_qty = int(tickets.get("tag", 0) or 0) + int(tickets.get("manual_tag", 0) or 0)
-            tag_abbr = (tickets.get("tag_text") or tickets.get("tag_abbreviation") or "").strip() or "TAG"
-            for _ in range(tag_qty):
-                entries.append(f"{full_name} {tag_abbr}".strip())
-
-        # NÃO troca por abreviação, mantém nome completo
-        for e in entries:
-            new = e.replace('"', "").replace("'", "").strip()
-            lines.append(new)
+                    lines.append(f"{full_name} {abbr}".strip())
+            except Exception as e:
+                logger.warning(f"Erro ao processar role {role_id}: {e}")
+        
+        # Processa TAG automática
+        tag_qty = int(tickets.get("tag", 0) or 0)
+        tag_abbr = (tickets.get("tag_text") or "").strip() or "TAG"
+        
+        logger.info(f"DEBUG TAG AUTO: {tag_abbr} = {tag_qty} fichas")
+        
+        for _ in range(tag_qty):
+            lines.append(f"{full_name} {tag_abbr}".strip())
+        
+        # Processa TAG manual
+        manual_tag_qty = int(tickets.get("manual_tag", 0) or 0)
+        
+        logger.info(f"DEBUG TAG MANUAL: {tag_abbr} = {manual_tag_qty} fichas")
+        
+        for _ in range(manual_tag_qty):
+            lines.append(f"{full_name} {tag_abbr}".strip())
 
     if not lines:
         await interaction.followup.send("Nenhum participante para exportar.", ephemeral=True)
         return
+
+    logger.info(f"EXPORTAR FINAL: {len(lines)} linhas")
 
     csv_text = "\n".join(lines) + "\n"
     bio = io.BytesIO(csv_text.encode("utf-8"))
