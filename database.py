@@ -1,17 +1,14 @@
 import json
 import os
-from dotenv import load_dotenv
 import logging
-
-load_dotenv()
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-_db_cache = {}
 DB_FILE = "database.json"
+_db = {}
 
-def get_default_db():
-    """Retorna estrutura padrão do banco de dados"""
+def get_default_db() -> Dict[str, Any]:
     return {
         "participants": {},
         "bonus_roles": {},
@@ -26,30 +23,27 @@ def get_default_db():
     }
 
 def load_db():
-    """Carrega dados do arquivo JSON local"""
-    global _db_cache
-    
+    global _db
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, 'r', encoding='utf-8') as f:
-                _db_cache = json.load(f)
+                _db = json.load(f)
                 logger.info("📥 Dados carregados do arquivo JSON")
-                return _db_cache
+                return _db
         except Exception as e:
             logger.error(f"Erro ao carregar JSON: {e}")
     
-    _db_cache = get_default_db()
-    save_db(_db_cache)
-    return _db_cache
+    _db = get_default_db()
+    save_db(_db)
+    return _db
 
 def save_db(data=None):
-    """Salva dados no arquivo JSON"""
-    global _db_cache
+    global _db
     
     if data:
-        _db_cache = data
+        _db = data
     else:
-        data = _db_cache
+        data = _db
     
     try:
         with open(DB_FILE, 'w', encoding='utf-8') as f:
@@ -59,12 +53,10 @@ def save_db(data=None):
         logger.error(f"Erro ao salvar JSON: {e}")
 
 def get_all_data():
-    """Retorna todos os dados em memória"""
-    return _db_cache
+    return _db
 
 def add_participant(user_id, first_name, last_name, tickets, message_id=None):
-    """Adiciona um participante"""
-    _db_cache["participants"][str(user_id)] = {
+    _db["participants"][str(user_id)] = {
         "first_name": first_name,
         "last_name": last_name,
         "tickets": tickets,
@@ -73,81 +65,67 @@ def add_participant(user_id, first_name, last_name, tickets, message_id=None):
     save_db()
 
 def get_participant(user_id):
-    """Retorna dados de um participante"""
-    return _db_cache["participants"].get(str(user_id))
+    return _db["participants"].get(str(user_id))
 
 def get_all_participants():
-    """Retorna todos os participantes"""
-    return _db_cache["participants"]
+    return _db["participants"]
 
 def is_registered(user_id):
-    """Verifica se o usuário está inscrito"""
-    return str(user_id) in _db_cache["participants"]
+    return str(user_id) in _db["participants"]
 
 def remove_participant(user_id):
-    """Remove um participante"""
-    if str(user_id) in _db_cache["participants"]:
-        del _db_cache["participants"][str(user_id)]
+    if str(user_id) in _db["participants"]:
+        del _db["participants"][str(user_id)]
         save_db()
         return True
     return False
 
 def update_tickets(user_id, tickets):
-    """Atualiza as fichas de um participante"""
-    if str(user_id) in _db_cache["participants"]:
-        _db_cache["participants"][str(user_id)]["tickets"] = tickets
+    if str(user_id) in _db["participants"]:
+        _db["participants"][str(user_id)]["tickets"] = tickets
         save_db()
 
 def is_name_taken(first_name, last_name):
-    """Verifica se o nome já foi registrado"""
     full_name_lower = f"{first_name} {last_name}".lower()
-    for participant in _db_cache["participants"].values():
+    for participant in _db["participants"].values():
         stored_name = f"{participant['first_name']} {participant['last_name']}".lower()
         if stored_name == full_name_lower:
             return True
     return False
 
 def clear_participants():
-    """Limpa todos os participantes"""
-    _db_cache["participants"] = {}
+    _db["participants"] = {}
     save_db()
 
 def add_bonus_role(role_id, quantity, abbreviation):
-    """Adiciona um cargo bônus"""
-    _db_cache["bonus_roles"][str(role_id)] = {
+    _db["bonus_roles"][str(role_id)] = {
         "quantity": quantity,
         "abbreviation": abbreviation
     }
     save_db()
 
 def get_bonus_roles():
-    """Retorna todos os cargos bônus"""
-    return _db_cache["bonus_roles"]
+    return _db["bonus_roles"]
 
 def remove_bonus_role(role_id):
-    """Remove um cargo bônus"""
-    if str(role_id) in _db_cache["bonus_roles"]:
-        del _db_cache["bonus_roles"][str(role_id)]
+    if str(role_id) in _db["bonus_roles"]:
+        del _db["bonus_roles"][str(role_id)]
         save_db()
         return True
     return False
 
 def set_hashtag(hashtag):
-    """Define a hashtag obrigatória"""
-    _db_cache["hashtag"] = hashtag
+    _db["hashtag"] = hashtag
     save_db()
 
 def get_hashtag():
-    """Retorna a hashtag configurada"""
-    return _db_cache["hashtag"]
+    return _db["hashtag"]
 
 def is_hashtag_locked():
-    """Verifica se a hashtag está bloqueada"""
     return False
 
 def set_tag(enabled, text=None, quantity=1):
-    """Configura a TAG do servidor"""
-    _db_cache["tag"] = {
+    _db["tag"] = {
         "enabled": enabled,
         "text": text if text else "",
         "quantity": quantity
@@ -155,110 +133,91 @@ def set_tag(enabled, text=None, quantity=1):
     save_db()
 
 def get_tag():
-    """Retorna configuração da TAG"""
-    return _db_cache["tag"]
+    return _db["tag"]
 
 def set_inscricao_channel(channel_id):
-    """Define o canal de inscrições"""
-    _db_cache["inscricao_channel"] = channel_id
+    _db["inscricao_channel"] = channel_id
     save_db()
 
 def get_inscricao_channel():
-    """Retorna o canal de inscrições"""
-    return _db_cache["inscricao_channel"]
+    return _db["inscricao_channel"]
 
 def set_button_message_id(message_id):
-    """Define o ID da mensagem do botão"""
-    _db_cache["button_message_id"] = message_id
+    _db["button_message_id"] = message_id
     save_db()
 
 def add_button_message_id(message_id):
-    """Adiciona um ID de mensagem do botão (suporta múltiplos)"""
-    current = _db_cache.get("button_message_id")
+    current = _db.get("button_message_id")
     if isinstance(current, list):
         if message_id not in current:
             current.append(message_id)
     elif current:
-        _db_cache["button_message_id"] = [current, message_id]
+        _db["button_message_id"] = [current, message_id]
     else:
-        _db_cache["button_message_id"] = message_id
+        _db["button_message_id"] = message_id
     save_db()
 
 def get_button_message_id():
-    """Retorna o ID da mensagem do botão"""
-    return _db_cache["button_message_id"]
+    return _db["button_message_id"]
 
 def set_inscricoes_closed(closed):
-    """Define se as inscrições estão fechadas"""
-    _db_cache["inscricoes_closed"] = closed
+    _db["inscricoes_closed"] = closed
     save_db()
 
 def get_inscricoes_closed():
-    """Verifica se as inscrições estão fechadas"""
-    return _db_cache["inscricoes_closed"]
+    return _db["inscricoes_closed"]
 
 def add_to_blacklist(user_id, reason, banned_by=None):
-    """Adiciona usuário à blacklist"""
-    _db_cache["blacklist"][str(user_id)] = {
+    _db["blacklist"][str(user_id)] = {
         "reason": reason,
         "banned_by": banned_by
     }
     save_db()
 
 def remove_from_blacklist(user_id):
-    """Remove usuário da blacklist"""
-    if str(user_id) in _db_cache["blacklist"]:
-        del _db_cache["blacklist"][str(user_id)]
+    if str(user_id) in _db["blacklist"]:
+        del _db["blacklist"][str(user_id)]
         save_db()
         return True
     return False
 
 def get_blacklist():
-    """Retorna a blacklist"""
-    return _db_cache["blacklist"]
+    return _db["blacklist"]
 
 def is_blacklisted(user_id):
-    """Verifica se o usuário está na blacklist"""
-    return str(user_id) in _db_cache["blacklist"]
+    return str(user_id) in _db["blacklist"]
 
 def set_chat_lock(enabled, channel_id=None):
-    """Define o chat lock"""
-    _db_cache["chat_lock"] = {
+    _db["chat_lock"] = {
         "enabled": enabled,
         "channel_id": channel_id
     }
     save_db()
 
 def get_chat_lock():
-    """Retorna configuração do chat lock"""
-    return _db_cache["chat_lock"]
+    return _db["chat_lock"]
 
 def add_moderator(user_id):
-    """Adiciona um moderador"""
-    if str(user_id) not in _db_cache["moderators"]:
-        _db_cache["moderators"].append(str(user_id))
+    if str(user_id) not in _db["moderators"]:
+        _db["moderators"].append(str(user_id))
         save_db()
 
 def remove_moderator(user_id):
-    """Remove um moderador"""
-    if str(user_id) in _db_cache["moderators"]:
-        _db_cache["moderators"].remove(str(user_id))
+    if str(user_id) in _db["moderators"]:
+        _db["moderators"].remove(str(user_id))
         save_db()
         return True
     return False
 
 def get_moderators():
-    """Retorna lista de moderadores"""
-    return _db_cache["moderators"]
+    return _db["moderators"]
 
 def is_moderator(user_id):
-    """Verifica se o usuário é moderador"""
-    return str(user_id) in _db_cache["moderators"]
+    return str(user_id) in _db["moderators"]
 
 def get_statistics():
-    """Retorna estatísticas do sorteio"""
-    participants = _db_cache["participants"]
-    bonus_roles = _db_cache["bonus_roles"]
+    participants = _db["participants"]
+    bonus_roles = _db["bonus_roles"]
     
     total_participants = len(participants)
     total_tickets = 0
@@ -290,13 +249,12 @@ def get_statistics():
         "total_tickets": total_tickets,
         "participants_with_tag": participants_with_tag,
         "tickets_by_role": tickets_by_role,
-        "blacklist_count": len(_db_cache["blacklist"])
+        "blacklist_count": len(_db["blacklist"])
     }
 
 def add_manual_tag(user_id, quantity=1):
-    """Adiciona TAG manual para um usuário"""
-    if str(user_id) in _db_cache["participants"]:
-        participant = _db_cache["participants"][str(user_id)]
+    if str(user_id) in _db["participants"]:
+        participant = _db["participants"][str(user_id)]
         if "tickets" not in participant:
             participant["tickets"] = {}
         
@@ -305,9 +263,8 @@ def add_manual_tag(user_id, quantity=1):
         save_db()
 
 def clear_all():
-    """Limpa todos os dados"""
-    global _db_cache
-    _db_cache = get_default_db()
+    global _db
+    _db = get_default_db()
     save_db()
 
-_db_cache = load_db()
+_db = load_db()
