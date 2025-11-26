@@ -1,0 +1,22 @@
+{
+    "participants": {},
+    "bonus_roles": {},
+    "hashtag": {
+        "value": null,
+        "locked": false
+    },
+    "tag": {
+        "enabled": false,
+        "text": null,
+        "quantity": 1
+    },
+    "inscricao_channel": 1430852198673420424,
+    "button_message_id": null,
+    "blacklist": {},
+    "chat_lock": {
+        "enabled": false,
+        "channel_id": null
+    },
+    "moderators": [],
+    "inscricoes_closed": false
+}
