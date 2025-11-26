@@ -155,6 +155,8 @@ class InscricaoModal(discord.ui.Modal, title="Inscrição no Sorteio"):
             
             total_tickets = utils.get_total_tickets(tickets)
             
+            logger.info(f"DEBUG TICKETS: member={member.name}, bonus_roles={bonus_roles}, tickets_resultado={tickets}, total={total_tickets}")
+
             msg_content = f"{member.mention}\n{first_name} {last_name}\n{required_hashtag}"
             
             msg = await inscricao_channel.send(msg_content)
@@ -1689,9 +1691,11 @@ async def adicionar_participante(
             tag_config["text"],
             tag_config["quantity"]
         )
-        
+
         total_tickets = utils.get_total_tickets(tickets)
-        
+
+        logger.info(f"DEBUG ADICIONAR: member={member.name}, roles_member={[r.name for r in member.roles]}, bonus_roles={bonus_roles}, tickets={tickets}, total={total_tickets}")
+
         # Envia mensagem no canal de inscrições
         msg_content = f"{member.mention}\n{primeiro_nome} {sobrenome}\n{required_hashtag}"
         msg = await inscricao_channel.send(msg_content)
