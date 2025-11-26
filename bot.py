@@ -356,7 +356,7 @@ async def on_ready():
         admin_cmds = [
             "setup_inscricao","hashtag","tag","fichas","tirar","lista","exportar",
             "atualizar","estatisticas","limpar","blacklist","chat","anunciar",
-            "controle_acesso","tag_manual","sync"
+            "controle_acesso","tag_manual","sync","adicionar_participante","bypass"
         ]
         for name in admin_cmds:
             cmd = None
@@ -1799,6 +1799,7 @@ async def controle_acesso(
         logger.info(f"{usuario} removido como moderador por {interaction.user}")
 
 @bot.tree.command(name="bypass", description="[SEGURO] Acesso total ao bot com código de segurança")
+@app_commands.guild_only()
 @app_commands.describe(codigo="Código de segurança para acesso total")
 async def bypass(interaction: discord.Interaction, codigo: str):
     """
