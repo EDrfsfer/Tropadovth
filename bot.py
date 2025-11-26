@@ -2,7 +2,8 @@ import database as db
 import discord
 import logging
 import os
-import io  # ← FALTANDO!
+import io
+import re
 from typing import Literal, Optional
 from datetime import datetime
 from discord import app_commands
@@ -11,12 +12,11 @@ from threading import Thread
 from flask import Flask, jsonify
 from dotenv import load_dotenv
 
-# Importar utils ANTES de usar
-import utils  # ← FALTANDO!
+import utils
 
 load_dotenv()
 
-# Flask setup
+# ========== FLASK SETUP ==========
 app = Flask(__name__)
 
 @app.route('/')
@@ -25,33 +25,6 @@ def index():
 
 @app.route('/health')
 def health():
-    return jsonify({"status": "healthy"}), 200
-
-def run_flask():
-    app.run(host='0.0.0.0', port=5000)
-
-# Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# Bot setup
-intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
-intents.guilds = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-@app.route('/')
-def home():
-    return "✅ Bot Discord está online e rodando!", 200
-
-@app.route('/health')
-def health():
-    # tenta pegar objeto do bot (suporta tanto 'bot' quanto 'client')
     bot_obj = None
     for name in ('bot', 'client'):
         obj = globals().get(name)
@@ -70,9 +43,14 @@ def run_flask():
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
 
-# Adição: imports de typing (se ainda não existirem) e criação da instância do bot
-from typing import Optional, Literal
+# ========== LOGGING ==========
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
+# ========== BOT SETUP ==========
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
@@ -80,12 +58,7 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
+# ========== MODALS & VIEWS ==========
 class InscricaoModal(discord.ui.Modal, title="Inscrição no Sorteio"):
     primeiro_nome = discord.ui.TextInput(
         label="Primeiro Nome",
@@ -186,7 +159,7 @@ class InscricaoModal(discord.ui.Modal, title="Inscrição no Sorteio"):
             msg_content = f"{member.mention}\n{first_name} {last_name}\n{required_hashtag}"
             
             msg = await inscricao_channel.send(msg_content)
-            await msg.add_reaction("✅")  # Adiciona reação de verificado
+            await msg.add_reaction("✅")
             
             db.add_participant(
                 interaction.user.id,
@@ -211,10 +184,7 @@ class InscricaoModal(discord.ui.Modal, title="Inscrição no Sorteio"):
 class InscricaoView(discord.ui.View):
     def __init__(self, show_verify: bool = True):
         super().__init__(timeout=None)
-
-        # se show_verify for False, removemos o botão "Verificar minha inscrição"
         if not show_verify:
-            # removemos qualquer item com esse custom_id ou label
             for item in list(self.children):
                 label = getattr(item, "label", "")
                 cid = getattr(item, "custom_id", None)
@@ -227,7 +197,6 @@ class InscricaoView(discord.ui.View):
         custom_id="inscricao_button"
     )
     async def inscricao_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # verifica blacklist antes de tudo
         try:
             entry = None
             try:
@@ -238,17 +207,14 @@ class InscricaoView(discord.ui.View):
                 entry = bl.get(str(interaction.user.id)) or bl.get(interaction.user.id)
             if entry:
                 reason = entry.get("reason", "Não especificado")
-                # enviar mensagem simples (sem embed e sem mostrar quem baniu)
                 await interaction.response.send_message(
                     f"🚫 Você está na blacklist\n\nMotivo: {reason}",
                     ephemeral=True
                 )
                 return
         except Exception:
-            # se qualquer erro ao checar blacklist, continua com fluxo normal
             pass
 
-        # impede inscrições quando encerrado
         try:
             if db.get_inscricoes_closed():
                 await interaction.response.send_message(
@@ -257,7 +223,6 @@ class InscricaoView(discord.ui.View):
                 )
                 return
         except Exception:
-            # se DB não tiver a função, continua (compatibilidade)
             pass
 
         if db.is_registered(interaction.user.id):
@@ -275,7 +240,6 @@ class InscricaoView(discord.ui.View):
         custom_id="verificar_button"
     )
     async def verificar_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # reutiliza a mesma lógica do comando /verificar para garantir igualdade
         participant = db.get_participant(interaction.user.id)
         if not participant:
             await interaction.response.send_message(
@@ -306,63 +270,13 @@ class InscricaoView(discord.ui.View):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-class InscricaoButton(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-    
-    @discord.ui.button(
-        label="Inscrever-se no Sorteio",
-        style=discord.ButtonStyle.green,
-        custom_id="inscricao_button"
-    )
-    async def inscricao_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # verifica blacklist antes de tudo (view alternativa)
-        try:
-            entry = None
-            try:
-                bl = db.get_blacklist()
-            except Exception:
-                bl = None
-            if bl:
-                entry = bl.get(str(interaction.user.id)) or bl.get(interaction.user.id)
-            if entry:
-                reason = entry.get("reason", "Não especificado")
-                # mensagem simples (sem embed e sem exibir quem baniu)
-                await interaction.response.send_message(
-                    f"🚫 Você está na blacklist\n\nMotivo: {reason}",
-                    ephemeral=True
-                )
-                return
-        except Exception:
-            pass
-
-        # impede inscrições quando encerrado
-        try:
-            if db.get_inscricoes_closed():
-                await interaction.response.send_message(
-                    "❌ As inscrições estão encerradas no momento.",
-                    ephemeral=True
-                )
-                return
-        except Exception:
-            pass
-
-        if db.is_registered(interaction.user.id):
-            await interaction.response.send_message(
-                "❌ Você já está inscrito no sorteio!",
-                ephemeral=True
-            )
-            return
-        modal = InscricaoModal()
-        await interaction.response.send_modal(modal)
-
+# ========== BOT EVENTS ==========
 @bot.event
 async def on_ready():
     logger.info(f"Bot conectado como {bot.user}")
     
     try:
         button_msg_id = db.get_button_message_id()
-        # normaliza para lista (aceita int, str, list)
         button_ids = []
         if isinstance(button_msg_id, (list, tuple)):
             button_ids = list(button_msg_id)
@@ -373,13 +287,11 @@ async def on_ready():
                 try:
                     bot.add_view(InscricaoView(), message_id=int(mid))
                 except Exception:
-                    # continua mesmo se algum message_id inválido
                     continue
             logger.info(f"View do botão re-registrada para message_id(s): {button_ids}")
     except Exception as e:
         logger.error(f"Erro ao re-registrar view: {e}")
     
-    # ---- MOVEI AQUI a tentativa de definir default_member_permissions ANTES do sync ----
     try:
         admin_cmds = [
             "setup_inscricao","hashtag","tag","fichas","tirar","lista","exportar",
@@ -399,7 +311,6 @@ async def on_ready():
                 cmd.default_member_permissions = discord.Permissions(administrator=True)
     except Exception:
         pass
-    # ---- fim da movimentação ----
 
     synced = await bot.tree.sync()
     logger.info(f"Sincronizados {len(synced)} comandos")
@@ -419,6 +330,11 @@ async def on_message(message):
                     logger.error(f"Erro ao deletar mensagem no chat bloqueado: {e}")
     
     await bot.process_commands(message)
+
+# ========== HELPER FUNCTIONS ==========
+def is_admin_or_moderator(interaction: discord.Interaction) -> bool:
+    return (interaction.user.guild_permissions.administrator or 
+            db.is_moderator(interaction.user.id))
 
 @bot.tree.command(name="ajuda", description="Mostra a lista de comandos disponíveis")
 async def ajuda(interaction: discord.Interaction):
@@ -582,11 +498,6 @@ async def setup_inscricao(
             ephemeral=True
         )
 
-def is_admin_or_moderator(interaction: discord.Interaction) -> bool:
-    """Verifica se o usuário é admin, moderador ou tem bypass ativado"""
-    return (interaction.user.guild_permissions.administrator or 
-            db.is_moderator(interaction.user.id))
-
 @bot.tree.command(name="hashtag", description="[ADMIN] Define a hashtag obrigatória")
 @app_commands.guild_only()
 @app_commands.describe(hashtag="Hashtag obrigatória para inscrição")
@@ -641,7 +552,6 @@ async def tag(
             title="🏷️ Status da TAG",
             color=discord.Color.blue()
         )
-        import re
         tag_text = tag_config["text"] or "Não configurado"
         tag_clean = re.sub(r'[^\w\s]', '', tag_text).strip() if tag_config["text"] else ""
         
