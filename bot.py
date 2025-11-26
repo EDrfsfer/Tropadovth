@@ -715,18 +715,59 @@ async def fichas(
         )
         return
     
+    await interaction.response.defer(ephemeral=True)
+    
     abbrev = abreviacao.strip()
     
+    # Adiciona o cargo bônus ao banco de dados
     db.add_bonus_role(cargo.id, quantidade, abbrev)
     
-    await interaction.response.send_message(
-        f"✅ Cargo {cargo.mention} configurado!\n"
-        f"**Fichas bônus**: {quantidade}\n"
-        f"**Abreviação**: {abbrev}",
-        ephemeral=True
-    )
-    
-    logger.info(f"Cargo bônus adicionado: {cargo.name} ({quantidade} fichas, {abbrev}) por {interaction.user}")
+    # **IMPORTANTE**: Recalcula fichas de todos os participantes existentes
+    try:
+        participants = db.get_all_participants()
+        bonus_roles = db.get_bonus_roles()
+        tag_config = db.get_tag()
+        
+        updated_count = 0
+        
+        for user_id, data in participants.items():
+            try:
+                member = interaction.guild.get_member(int(user_id))
+                if not member:
+                    continue
+                
+                # Recalcula fichas com a nova config
+                new_tickets = utils.calculate_tickets(
+                    member,
+                    bonus_roles,
+                    tag_config["enabled"],
+                    tag_config["text"],
+                    tag_config["quantity"]
+                )
+                
+                # Atualiza no banco de dados
+                db.update_tickets(int(user_id), new_tickets)
+                updated_count += 1
+            except Exception as e:
+                logger.warning(f"Erro ao atualizar fichas do participante {user_id}: {e}")
+                continue
+        
+        await interaction.followup.send(
+            f"✅ Cargo {cargo.mention} configurado!\n"
+            f"**Fichas bônus**: {quantidade}\n"
+            f"**Abreviação**: {abbrev}\n"
+            f"**Participantes atualizados**: {updated_count}",
+            ephemeral=True
+        )
+        
+        logger.info(f"Cargo bônus adicionado: {cargo.name} ({quantidade} fichas, {abbrev}) por {interaction.user} - {updated_count} participantes atualizados")
+        
+    except Exception as e:
+        logger.error(f"Erro ao adicionar cargo bônus: {e}", exc_info=True)
+        await interaction.followup.send(
+            f"⚠️ Cargo adicionado, mas erro ao atualizar participantes: {str(e)}",
+            ephemeral=True
+        )
 
 @bot.tree.command(name="tirar", description="[ADMIN] Remove um cargo bônus")
 @app_commands.describe(cargo="Cargo a ser removido dos bônus")
@@ -738,69 +779,54 @@ async def tirar(interaction: discord.Interaction, cargo: discord.Role):
         )
         return
     
+    await interaction.response.defer(ephemeral=True)
+    
     if db.remove_bonus_role(cargo.id):
-        await interaction.response.send_message(
-            f"✅ Cargo {cargo.mention} removido dos bônus!",
-            ephemeral=True
-        )
-        logger.info(f"Cargo bônus removido: {cargo.name} por {interaction.user}")
+        # **IMPORTANTE**: Recalcula fichas de todos os participantes
+        try:
+            participants = db.get_all_participants()
+            bonus_roles = db.get_bonus_roles()
+            tag_config = db.get_tag()
+            
+            updated_count = 0
+            
+            for user_id, data in participants.items():
+                try:
+                    member = interaction.guild.get_member(int(user_id))
+                    if not member:
+                        continue
+                    
+                    new_tickets = utils.calculate_tickets(
+                        member,
+                        bonus_roles,
+                        tag_config["enabled"],
+                        tag_config["text"],
+                        tag_config["quantity"]
+                    )
+                    
+                    db.update_tickets(int(user_id), new_tickets)
+                    updated_count += 1
+                except Exception as e:
+                    logger.warning(f"Erro ao atualizar fichas do participante {user_id}: {e}")
+                    continue
+            
+            await interaction.followup.send(
+                f"✅ Cargo {cargo.mention} removido dos bônus!\n"
+                f"**Participantes atualizados**: {updated_count}",
+                ephemeral=True
+            )
+            logger.info(f"Cargo bônus removido: {cargo.name} por {interaction.user} - {updated_count} participantes atualizados")
+        except Exception as e:
+            logger.error(f"Erro ao remover cargo bônus: {e}", exc_info=True)
+            await interaction.followup.send(
+                f"⚠️ Cargo removido, mas erro ao atualizar participantes: {str(e)}",
+                ephemeral=True
+            )
     else:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"❌ Cargo {cargo.mention} não estava configurado como bônus.",
             ephemeral=True
         )
-
-@bot.tree.command(name="lista", description="[ADMIN] Lista os participantes")
-@app_commands.describe(tipo="Tipo de listagem")
-async def lista(interaction: discord.Interaction, tipo: Literal["simples", "com_fichas"]):
-    if not is_admin_or_moderator(interaction):
-        await interaction.response.send_message(
-            "❌ Você não tem permissão para usar este comando.",
-            ephemeral=True
-        )
-        return
-
-    participants = db.get_all_participants()
-    
-    if not participants:
-        await interaction.response.send_message(
-            "📋 Nenhum participante inscrito ainda.",
-            ephemeral=True
-        )
-        return
-    
-    await interaction.response.defer(ephemeral=True)
-    
-    lines = []
-    
-    if tipo == "simples":
-        lines.append("📋 **Lista de Participantes (Simples)**\n")
-        # monta lista de nomes e ordena alfabeticamente
-        names = [f"{data['first_name']} {data['last_name']}" for _, data in participants.items()]
-        names.sort(key=lambda s: s.lower())
-        for i, name in enumerate(names, 1):
-            lines.append(f"{i}. {name}")
-    
-    else:
-        lines.append("📋 **Lista de Participantes (Com Fichas)**\n")
-        # não colocar linha em branco entre participantes
-        for user_id, data in participants.items():
-            entries = utils.format_detailed_entry(
-                data["first_name"],
-                data["last_name"],
-                data["tickets"]
-            )
-            lines.extend(entries)
-            # removido: lines.append("")
-    
-    content = "\n".join(lines)
-    
-    if len(content) > 2000:
-        chunks = [content[i:i+2000] for i in range(0, len(content), 2000)]
-        for chunk in chunks:
-            await interaction.followup.send(chunk, ephemeral=True)
-    else:
-        await interaction.followup.send(content, ephemeral=True)
 
 @bot.tree.command(
     name="exportar",
