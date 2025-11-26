@@ -8,26 +8,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-MONGODB_URI = os.getenv("MONGODB_URI")
-USE_MONGO = bool(MONGODB_URI)
-
 _db_cache = {}
-
-if USE_MONGO:
-    try:
-        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-        client.server_info()
-        db_mongo = client["discord_bot"]
-        collection = db_mongo["bot_data"]
-        logger.info("✅ MongoDB conectado com sucesso!")
-    except Exception as e:
-        logger.warning(f"⚠️ MongoDB não disponível, usando JSON local: {e}")
-        USE_MONGO = False
-        db_mongo = None
-else:
-    logger.warning("⚠️ MONGODB_URI não configurada, usando JSON local")
-    db_mongo = None
-
 DB_FILE = "database.json"
 
 def get_default_db():
@@ -46,25 +27,14 @@ def get_default_db():
     }
 
 def load_db():
-    """Carrega dados do MongoDB ou arquivo JSON local"""
+    """Carrega dados do arquivo JSON local"""
     global _db_cache
-    
-    if USE_MONGO and db_mongo:
-        try:
-            data = collection.find_one({"_id": "main"})
-            if data:
-                data.pop("_id", None)
-                _db_cache = data
-                logger.info("📥 Dados carregados do MongoDB")
-                return data
-        except Exception as e:
-            logger.warning(f"Erro ao carregar MongoDB: {e}")
     
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, 'r', encoding='utf-8') as f:
                 _db_cache = json.load(f)
-                logger.info("📥 Dados carregados do arquivo JSON local")
+                logger.info("📥 Dados carregados do arquivo JSON")
                 return _db_cache
         except Exception as e:
             logger.error(f"Erro ao carregar JSON: {e}")
@@ -74,7 +44,7 @@ def load_db():
     return _db_cache
 
 def save_db(data=None):
-    """Salva dados no MongoDB E no arquivo JSON (backup local)"""
+    """Salva dados no arquivo JSON"""
     global _db_cache
     
     if data:
@@ -85,21 +55,9 @@ def save_db(data=None):
     try:
         with open(DB_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        logger.debug("💾 Dados salvos em JSON local")
+        logger.debug("💾 Dados salvos em JSON")
     except Exception as e:
         logger.error(f"Erro ao salvar JSON: {e}")
-    
-    if USE_MONGO and db_mongo:
-        try:
-            data_to_save = data.copy()
-            collection.replace_one(
-                {"_id": "main"},
-                {"_id": "main", **data_to_save},
-                upsert=True
-            )
-            logger.debug("☁️ Dados salvos no MongoDB")
-        except Exception as e:
-            logger.warning(f"Aviso ao salvar MongoDB: {e}")
 
 def get_all_data():
     """Retorna todos os dados em memória"""
