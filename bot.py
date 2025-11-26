@@ -1,19 +1,49 @@
 import database as db
 import discord
-import os
 import logging
-import utils
-import io
-from typing import Literal
+import os
+import io  # ← FALTANDO!
+from typing import Literal, Optional
 from datetime import datetime
 from discord import app_commands
 from discord.ext import commands
 from threading import Thread
 from flask import Flask, jsonify
 from dotenv import load_dotenv
-import asyncio
 
+# Importar utils ANTES de usar
+import utils  # ← FALTANDO!
+
+load_dotenv()
+
+# Flask setup
 app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return jsonify({"status": "Bot is running!"})
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "healthy"}), 200
+
+def run_flask():
+    app.run(host='0.0.0.0', port=5000)
+
+# Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Bot setup
+intents = discord.Intents.default()
+intents.members = True
+intents.message_content = True
+intents.guilds = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 @app.route('/')
 def home():
@@ -39,8 +69,6 @@ def health():
 def run_flask():
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
-
-load_dotenv()
 
 # Adição: imports de typing (se ainda não existirem) e criação da instância do bot
 from typing import Optional, Literal
