@@ -15,5 +15,24 @@
         "channel_id": null
     },
     "moderators": [],
-    "inscricoes_closed": false
+    "inscricoes_closed": false,
+    "commands": {
+        "tag_manual": {
+            "description": "[ADMIN] Adiciona tag manual a um participante",
+            "options": [
+                {
+                    "name": "usuario",
+                    "description": "Mencione o usuário",
+                    "type": 6,
+                    "required": true
+                },
+                {
+                    "name": "quantidade",
+                    "description": "Quantidade de fichas bônus",
+                    "type": 4,
+                    "required": false
+                }
+            ]
+        }
+    }
 }
