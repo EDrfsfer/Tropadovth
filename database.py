@@ -27,6 +27,9 @@ if USE_MONGO:
         logger.warning(f"⚠️ MongoDB não disponível, usando JSON local: {e}")
         USE_MONGO = False
         db_mongo = None
+else:
+    logger.warning("⚠️ MONGODB_URI não configurada, usando JSON local")
+    db_mongo = None
 
 DB_FILE = "database.json"
 
@@ -65,7 +68,7 @@ def load_db():
         try:
             with open(DB_FILE, 'r', encoding='utf-8') as f:
                 _db_cache = json.load(f)
-                logger.info("📥 Dados carregados do arquivo JSON")
+                logger.info("📥 Dados carregados do arquivo JSON local")
                 return _db_cache
         except Exception as e:
             logger.error(f"Erro ao carregar JSON: {e}")
@@ -105,299 +108,284 @@ def save_db(data=None):
         except Exception as e:
             logger.warning(f"Aviso ao salvar MongoDB: {e}")
 
-# ========== HASHTAG ==========
+def get_all_data():
+    """Retorna todos os dados em memória"""
+    return _db_cache
 
-def set_hashtag(hashtag: str):
-    global _db
-    _db["hashtag"]["value"] = hashtag
-    _save()
+# ===== FUNÇÕES DE PARTICIPANTES =====
 
-def get_hashtag() -> Optional[str]:
-    global _db
-    return _db.get("hashtag", {}).get("value")
-
-def is_hashtag_locked() -> bool:
-    global _db
-    return _db.get("hashtag", {}).get("locked", False)
-
-def lock_hashtag():
-    global _db
-    _db["hashtag"]["locked"] = True
-    _save()
-
-def unlock_hashtag():
-    global _db
-    _db["hashtag"]["locked"] = False
-    _save()
-
-# ========== TAG ==========
-
-def set_tag(enabled: bool, text: Optional[str] = None, quantity: int = 1):
-    global _db
-    _db["tag"]["enabled"] = enabled
-    if text:
-        _db["tag"]["text"] = text
-    if quantity > 0:
-        _db["tag"]["quantity"] = quantity
-    _save()
-
-def get_tag() -> Dict[str, Any]:
-    global _db
-    return _db.get("tag", {"enabled": False, "text": None, "quantity": 1})
-
-# ========== BONUS ROLES ==========
-
-def add_bonus_role(role_id: int, quantity: int, abbreviation: str):
-    global _db
-    _db["bonus_roles"][str(role_id)] = {
-        "quantity": quantity,
-        "abbreviation": abbreviation
-    }
-    _save()
-
-def get_bonus_roles() -> Dict[int, Dict[str, Any]]:
-    global _db
-    roles = {}
-    for role_id, data in _db.get("bonus_roles", {}).items():
-        try:
-            roles[int(role_id)] = data
-        except ValueError:
-            continue
-    return roles
-
-def remove_bonus_role(role_id: int) -> bool:
-    global _db
-    role_id_str = str(role_id)
-    if role_id_str in _db.get("bonus_roles", {}):
-        del _db["bonus_roles"][role_id_str]
-        _save()
-        return True
-    return False
-
-# ========== PARTICIPANTS ==========
-
-def add_participant(user_id: int, first_name: str, last_name: str, tickets: Dict[str, Any], message_id: int):
-    global _db
-    _db["participants"][str(user_id)] = {
+def add_participant(user_id, first_name, last_name, tickets, message_id=None):
+    """Adiciona um participante"""
+    _db_cache["participants"][str(user_id)] = {
         "first_name": first_name,
         "last_name": last_name,
         "tickets": tickets,
-        "message_id": message_id,
-        "timestamp": datetime.utcnow().isoformat()
+        "message_id": message_id
     }
-    _save()
+    save_db()
 
-def get_participant(user_id: int) -> Optional[Dict[str, Any]]:
-    global _db
-    user_id_str = str(user_id)
-    if user_id_str in _db.get("participants", {}):
-        return _db["participants"][user_id_str]
-    return None
+def get_participant(user_id):
+    """Retorna dados de um participante"""
+    return _db_cache["participants"].get(str(user_id))
 
-def get_all_participants() -> Dict[int, Dict[str, Any]]:
-    global _db
-    return _db.get("participants", {})
+def get_all_participants():
+    """Retorna todos os participantes"""
+    return _db_cache["participants"]
 
-def is_registered(user_id: int) -> bool:
-    global _db
-    return str(user_id) in _db.get("participants", {})
+def is_registered(user_id):
+    """Verifica se o usuário está inscrito"""
+    return str(user_id) in _db_cache["participants"]
 
-def is_name_taken(first_name: str, last_name: str) -> bool:
-    global _db
-    search_name = f"{first_name.lower()} {last_name.lower()}"
-    for data in _db.get("participants", {}).values():
-        participant_name = f"{data['first_name'].lower()} {data['last_name'].lower()}"
-        if participant_name == search_name:
+def remove_participant(user_id):
+    """Remove um participante"""
+    if str(user_id) in _db_cache["participants"]:
+        del _db_cache["participants"][str(user_id)]
+        save_db()
+        return True
+    return False
+
+def update_tickets(user_id, tickets):
+    """Atualiza as fichas de um participante"""
+    if str(user_id) in _db_cache["participants"]:
+        _db_cache["participants"][str(user_id)]["tickets"] = tickets
+        save_db()
+
+def is_name_taken(first_name, last_name):
+    """Verifica se o nome já foi registrado"""
+    full_name_lower = f"{first_name} {last_name}".lower()
+    for participant in _db_cache["participants"].values():
+        stored_name = f"{participant['first_name']} {participant['last_name']}".lower()
+        if stored_name == full_name_lower:
             return True
     return False
 
-def update_tickets(user_id: int, tickets: Dict[str, Any]):
-    global _db
-    user_id_str = str(user_id)
-    if user_id_str in _db.get("participants", {}):
-        _db["participants"][user_id_str]["tickets"] = tickets
-        _save()
-
-def remove_participant(user_id: int) -> bool:
-    global _db
-    user_id_str = str(user_id)
-    if user_id_str in _db.get("participants", {}):
-        del _db["participants"][user_id_str]
-        _save()
-        return True
-    return False
-
-def add_manual_tag(user_id: int, quantity: int):
-    global _db
-    user_id_str = str(user_id)
-    if user_id_str in _db.get("participants", {}):
-        if "manual_tag" not in _db["participants"][user_id_str]["tickets"]:
-            _db["participants"][user_id_str]["tickets"]["manual_tag"] = 0
-        _db["participants"][user_id_str]["tickets"]["manual_tag"] += quantity
-        _save()
-
 def clear_participants():
-    global _db
-    _db["participants"] = {}
-    _save()
+    """Limpa todos os participantes"""
+    _db_cache["participants"] = {}
+    save_db()
 
-def clear_all():
-    global _db
-    _db = get_default_db()
-    _save()
+# ===== FUNÇÕES DE CARGOS BÔNUS =====
 
-# ========== BLACKLIST ==========
-
-def add_to_blacklist(user_id: int, reason: str, banned_by: int):
-    global _db
-    _db["blacklist"][str(user_id)] = {
-        "reason": reason,
-        "banned_by": banned_by,
-        "timestamp": datetime.utcnow().isoformat()
+def add_bonus_role(role_id, quantity, abbreviation):
+    """Adiciona um cargo bônus"""
+    _db_cache["bonus_roles"][str(role_id)] = {
+        "quantity": quantity,
+        "abbreviation": abbreviation
     }
-    _save()
+    save_db()
 
-def remove_from_blacklist(user_id: int) -> bool:
-    global _db
-    user_id_str = str(user_id)
-    if user_id_str in _db.get("blacklist", {}):
-        del _db["blacklist"][user_id_str]
-        _save()
+def get_bonus_roles():
+    """Retorna todos os cargos bônus"""
+    return _db_cache["bonus_roles"]
+
+def remove_bonus_role(role_id):
+    """Remove um cargo bônus"""
+    if str(role_id) in _db_cache["bonus_roles"]:
+        del _db_cache["bonus_roles"][str(role_id)]
+        save_db()
         return True
     return False
 
-def get_blacklist() -> Dict[int, Dict[str, Any]]:
-    global _db
-    return _db.get("blacklist", {})
+# ===== FUNÇÕES DE HASHTAG =====
 
-def is_blacklisted(user_id: int) -> bool:
-    global _db
-    return str(user_id) in _db.get("blacklist", {})
+def set_hashtag(hashtag):
+    """Define a hashtag obrigatória"""
+    _db_cache["hashtag"] = hashtag
+    save_db()
 
-# ========== INSCRICAO CHANNEL ==========
+def get_hashtag():
+    """Retorna a hashtag configurada"""
+    return _db_cache["hashtag"]
 
-def set_inscricao_channel(channel_id: int):
-    global _db
-    _db["inscricao_channel"] = channel_id
-    _save()
+def is_hashtag_locked():
+    """Verifica se a hashtag está bloqueada"""
+    return False  # Implemente sua lógica se necessário
 
-def get_inscricao_channel() -> Optional[int]:
-    global _db
-    return _db.get("inscricao_channel")
+# ===== FUNÇÕES DE TAG =====
 
-# ========== BUTTON MESSAGE ==========
+def set_tag(enabled, text=None, quantity=1):
+    """Configura a TAG do servidor"""
+    _db_cache["tag"] = {
+        "enabled": enabled,
+        "text": text if text else "",
+        "quantity": quantity
+    }
+    save_db()
 
-def set_button_message_id(message_id: int):
-    global _db
-    _db["button_message_id"] = message_id
-    _save()
+def get_tag():
+    """Retorna configuração da TAG"""
+    return _db_cache["tag"]
 
-def add_button_message_id(message_id: int):
-    """Adiciona um message_id à lista (permite múltiplas mensagens)"""
-    global _db
-    if not isinstance(_db.get("button_message_id"), list):
-        if _db.get("button_message_id"):
-            _db["button_message_id"] = [_db["button_message_id"]]
-        else:
-            _db["button_message_id"] = []
-    if message_id not in _db["button_message_id"]:
-        _db["button_message_id"].append(message_id)
-    _save()
+# ===== FUNÇÕES DE CANAL =====
+
+def set_inscricao_channel(channel_id):
+    """Define o canal de inscrições"""
+    _db_cache["inscricao_channel"] = channel_id
+    save_db()
+
+def get_inscricao_channel():
+    """Retorna o canal de inscrições"""
+    return _db_cache["inscricao_channel"]
+
+def set_button_message_id(message_id):
+    """Define o ID da mensagem do botão"""
+    _db_cache["button_message_id"] = message_id
+    save_db()
+
+def add_button_message_id(message_id):
+    """Adiciona um ID de mensagem do botão (suporta múltiplos)"""
+    current = _db_cache.get("button_message_id")
+    if isinstance(current, list):
+        if message_id not in current:
+            current.append(message_id)
+    elif current:
+        _db_cache["button_message_id"] = [current, message_id]
+    else:
+        _db_cache["button_message_id"] = message_id
+    save_db()
 
 def get_button_message_id():
-    global _db
-    return _db.get("button_message_id")
+    """Retorna o ID da mensagem do botão"""
+    return _db_cache["button_message_id"]
 
-# ========== CHAT LOCK ==========
+# ===== FUNÇÕES DE INSCRIÇÕES =====
 
-def set_chat_lock(enabled: bool, channel_id: Optional[int] = None):
-    global _db
-    _db["chat_lock"]["enabled"] = enabled
-    if channel_id:
-        _db["chat_lock"]["channel_id"] = channel_id
-    _save()
+def set_inscricoes_closed(closed):
+    """Define se as inscrições estão fechadas"""
+    _db_cache["inscricoes_closed"] = closed
+    save_db()
 
-def get_chat_lock() -> Dict[str, Any]:
-    global _db
-    return _db.get("chat_lock", {"enabled": False, "channel_id": None})
+def get_inscricoes_closed():
+    """Verifica se as inscrições estão fechadas"""
+    return _db_cache["inscricoes_closed"]
 
-# ========== MODERATORS ==========
+# ===== FUNÇÕES DE BLACKLIST =====
 
-def add_moderator(user_id: int):
-    global _db
-    if user_id not in _db.get("moderators", []):
-        _db["moderators"].append(user_id)
-    _save()
+def add_to_blacklist(user_id, reason, banned_by=None):
+    """Adiciona usuário à blacklist"""
+    _db_cache["blacklist"][str(user_id)] = {
+        "reason": reason,
+        "banned_by": banned_by
+    }
+    save_db()
 
-def remove_moderator(user_id: int) -> bool:
-    global _db
-    if user_id in _db.get("moderators", []):
-        _db["moderators"].remove(user_id)
-        _save()
+def remove_from_blacklist(user_id):
+    """Remove usuário da blacklist"""
+    if str(user_id) in _db_cache["blacklist"]:
+        del _db_cache["blacklist"][str(user_id)]
+        save_db()
         return True
     return False
 
-def is_moderator(user_id: int) -> bool:
-    global _db
-    return user_id in _db.get("moderators", [])
+def get_blacklist():
+    """Retorna a blacklist"""
+    return _db_cache["blacklist"]
 
-def get_moderators() -> list:
-    global _db
-    return _db.get("moderators", [])
+def is_blacklisted(user_id):
+    """Verifica se o usuário está na blacklist"""
+    return str(user_id) in _db_cache["blacklist"]
 
-# ========== INSCRICOES CLOSED ==========
+# ===== FUNÇÕES DE CHAT LOCK =====
 
-def set_inscricoes_closed(closed: bool):
-    global _db
-    _db["inscricoes_closed"] = closed
-    _save()
+def set_chat_lock(enabled, channel_id=None):
+    """Define o chat lock"""
+    _db_cache["chat_lock"] = {
+        "enabled": enabled,
+        "channel_id": channel_id
+    }
+    save_db()
 
-def get_inscricoes_closed() -> bool:
-    global _db
-    return _db.get("inscricoes_closed", False)
+def get_chat_lock():
+    """Retorna configuração do chat lock"""
+    return _db_cache["chat_lock"]
 
-# ========== STATISTICS ==========
+# ===== FUNÇÕES DE MODERADORES =====
 
-def get_statistics() -> Dict[str, Any]:
-    global _db
-    participants = _db.get("participants", {})
+def add_moderator(user_id):
+    """Adiciona um moderador"""
+    if str(user_id) not in _db_cache["moderators"]:
+        _db_cache["moderators"].append(str(user_id))
+        save_db()
+
+def remove_moderator(user_id):
+    """Remove um moderador"""
+    if str(user_id) in _db_cache["moderators"]:
+        _db_cache["moderators"].remove(str(user_id))
+        save_db()
+        return True
+    return False
+
+def get_moderators():
+    """Retorna lista de moderadores"""
+    return _db_cache["moderators"]
+
+def is_moderator(user_id):
+    """Verifica se o usuário é moderador"""
+    return str(user_id) in _db_cache["moderators"]
+
+# ===== FUNÇÕES DE ESTATÍSTICAS =====
+
+def get_statistics():
+    """Retorna estatísticas do sorteio"""
+    participants = _db_cache["participants"]
+    bonus_roles = _db_cache["bonus_roles"]
     
     total_participants = len(participants)
     total_tickets = 0
     participants_with_tag = 0
     tickets_by_role = {}
     
-    for data in participants.values():
-        tickets = data.get("tickets", {})
+    for participant in participants.values():
+        tickets = participant.get("tickets", {})
         
-        # Total de fichas
-        base = tickets.get("base", 1)
-        total_tickets += base
+        # Conta fichas totais
+        total_tickets += sum(int(t) if isinstance(t, (int, str)) else t.get("quantity", 1) 
+                           for t in tickets.values() if t)
         
-        # Fichas de TAG
-        tag_qty = tickets.get("tag", 0) + tickets.get("manual_tag", 0)
-        total_tickets += tag_qty
-        if tag_qty > 0:
+        # Conta participantes com TAG
+        if tickets.get("tag") or tickets.get("manual_tag"):
             participants_with_tag += 1
         
-        # Fichas por cargo
+        # Agrupa por cargo
         roles = tickets.get("roles", {})
         for role_id, role_info in roles.items():
             if role_id not in tickets_by_role:
                 tickets_by_role[role_id] = {
                     "count": 0,
                     "total_tickets": 0,
-                    "abbreviation": role_info.get("abbreviation", "")
+                    "abbreviation": bonus_roles.get(role_id, {}).get("abbreviation", "?")
                 }
-            role_qty = role_info.get("quantity", 1)
             tickets_by_role[role_id]["count"] += 1
-            tickets_by_role[role_id]["total_tickets"] += role_qty
-            total_tickets += role_qty
+            tickets_by_role[role_id]["total_tickets"] += int(role_info.get("quantity", 1))
     
     return {
         "total_participants": total_participants,
         "total_tickets": total_tickets,
         "participants_with_tag": participants_with_tag,
         "tickets_by_role": tickets_by_role,
-        "blacklist_count": len(_db.get("blacklist", {}))
+        "blacklist_count": len(_db_cache["blacklist"])
     }
+
+# ===== FUNÇÕES DE TAG MANUAL =====
+
+def add_manual_tag(user_id, quantity=1):
+    """Adiciona TAG manual para um usuário"""
+    if str(user_id) in _db_cache["participants"]:
+        participant = _db_cache["participants"][str(user_id)]
+        if "tickets" not in participant:
+            participant["tickets"] = {}
+        
+        current_manual_tag = participant["tickets"].get("manual_tag", 0)
+        participant["tickets"]["manual_tag"] = int(current_manual_tag) + int(quantity)
+        save_db()
+
+# ===== FUNÇÕES DE LIMPEZA =====
+
+def clear_all():
+    """Limpa todos os dados"""
+    global _db_cache
+    _db_cache = get_default_db()
+    save_db()
+
+# Carrega dados ao iniciar
+_db_cache = load_db()
